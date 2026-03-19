@@ -1,5 +1,0 @@
-/home/paulmckinney/Documents/SqliteSyncPro/admin/build/CMakeFiles/SQLSyncAdmin.dir
-/home/paulmckinney/Documents/SqliteSyncPro/admin/build/CMakeFiles/edit_cache.dir
-/home/paulmckinney/Documents/SqliteSyncPro/admin/build/CMakeFiles/rebuild_cache.dir
-/home/paulmckinney/Documents/SqliteSyncPro/admin/build/CMakeFiles/SQLSyncAdmin_autogen_timestamp_deps.dir
-/home/paulmckinney/Documents/SqliteSyncPro/admin/build/CMakeFiles/SQLSyncAdmin_autogen.dir

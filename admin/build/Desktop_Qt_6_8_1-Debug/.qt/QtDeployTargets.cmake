@@ -1,2 +1,0 @@
-set(__QT_DEPLOY_TARGET_SQLSyncAdmin_FILE /home/paulmckinney/Documents/SqliteSyncPro/admin/build/Desktop_Qt_6_8_1-Debug/SQLSyncAdmin)
-set(__QT_DEPLOY_TARGET_SQLSyncAdmin_TYPE EXECUTABLE)
