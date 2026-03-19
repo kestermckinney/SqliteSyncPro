@@ -1,5 +1,0 @@
-tst_schemainspector 10 0.0339436
-tst_authmanager 9 0.0195499
-tst_syncengine 10 0.0185252
-tst_threading 10 0.0377287
----
