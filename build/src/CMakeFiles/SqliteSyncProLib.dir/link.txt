@@ -1,0 +1,2 @@
+/usr/bin/ar qc libSqliteSyncProLib.a CMakeFiles/SqliteSyncProLib.dir/SqliteSyncProLib_autogen/mocs_compilation.cpp.o CMakeFiles/SqliteSyncProLib.dir/schemainspector.cpp.o CMakeFiles/SqliteSyncProLib.dir/httpclient.cpp.o CMakeFiles/SqliteSyncProLib.dir/authmanager.cpp.o CMakeFiles/SqliteSyncProLib.dir/rowencryption.cpp.o CMakeFiles/SqliteSyncProLib.dir/syncengine.cpp.o CMakeFiles/SqliteSyncProLib.dir/syncworker.cpp.o CMakeFiles/SqliteSyncProLib.dir/sqlitesyncpro.cpp.o CMakeFiles/SqliteSyncProLib.dir/syncapisettingsdialog.cpp.o
+/usr/bin/ranlib libSqliteSyncProLib.a

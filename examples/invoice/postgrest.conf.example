@@ -1,0 +1,29 @@
+# postgrest.conf.example
+#
+# Copy this to postgrest.conf and fill in the values for your environment.
+# Reference: https://postgrest.org/en/stable/configuration.html
+
+# PostgreSQL connection string.
+# The 'authenticator' role is the low-privilege role PostgREST connects as.
+# It switches to 'anon' or 'app_user' based on whether a valid JWT is present.
+db-uri = "postgres://authenticator:change_me_in_production@localhost:5432/mydb"
+
+# Schema that PostgREST exposes.
+db-schema = "public"
+
+# Role assumed for requests with no JWT (or an invalid one).
+# This role can only execute rpc_login and create_user.
+db-anon-role = "anon"
+
+# HS256 shared secret used to verify incoming JWTs and sign tokens in rpc_login.
+# MUST match the value set by:
+#   ALTER DATABASE mydb SET "app.jwt_secret" = '...';
+# in postgres_schema.sql.
+jwt-secret = "CHANGE_ME_replace_with_32+_random_characters"
+
+# Bind address and port
+server-host = "!4"   # listen on all IPv4 interfaces; use "localhost" to restrict
+server-port = 3000
+
+# Optional: increase for large JSONROWDATA payloads
+# max-rows = 1000

@@ -1,0 +1,125 @@
+#include "httpclient.h"
+
+#include <QNetworkReply>
+#include <QEventLoop>
+#include <QUrl>
+#include <QDebug>
+
+HttpClient::HttpClient(QObject *parent)
+    : QObject(parent)
+    , m_nam(new QNetworkAccessManager(this))
+{
+}
+
+void HttpClient::setBaseUrl(const QString &url)
+{
+    m_baseUrl = url;
+    if (m_baseUrl.endsWith(QLatin1Char('/')))
+        m_baseUrl.chop(1);
+}
+
+void HttpClient::setAuthToken(const QString &token)
+{
+    m_authToken = token;
+}
+
+void HttpClient::setApiKey(const QString &key)
+{
+    m_apiKey = key;
+}
+
+QNetworkRequest HttpClient::buildRequest(const QString &endpoint, const QUrlQuery &query) const
+{
+    QString urlStr = m_baseUrl + QLatin1Char('/') + endpoint;
+    QUrl url(urlStr);
+    if (!query.isEmpty())
+        url.setQuery(query);
+
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    req.setRawHeader("Accept", "application/json");
+
+    if (!m_apiKey.isEmpty())
+        req.setRawHeader("apikey", m_apiKey.toUtf8());
+
+    if (!m_authToken.isEmpty())
+        req.setRawHeader("Authorization",
+                         QStringLiteral("Bearer %1").arg(m_authToken).toUtf8());
+
+    return req;
+}
+
+QByteArray HttpClient::executeRequest(QNetworkRequest &request,
+                                       const QByteArray &verb,
+                                       const QByteArray &body)
+{
+    m_lastStatusCode = 0;
+    m_lastError.clear();
+
+    qDebug().noquote() << QStringLiteral("[HttpClient] --> %1 %2")
+                              .arg(QString::fromLatin1(verb), request.url().toString());
+    if (!body.isEmpty())
+        qDebug().noquote() << "[HttpClient]     body:" << body;
+
+    QNetworkReply *reply = nullptr;
+    if (verb == "GET") {
+        reply = m_nam->get(request);
+    } else if (verb == "POST") {
+        reply = m_nam->post(request, body);
+    } else if (verb == "PATCH") {
+        reply = m_nam->sendCustomRequest(request, "PATCH", body);
+    } else {
+        m_lastError = QStringLiteral("Unsupported HTTP verb: %1").arg(QString::fromLatin1(verb));
+        return {};
+    }
+
+    QEventLoop loop;
+    connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    const QByteArray responseBody = reply->readAll();
+    m_lastStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+    qDebug().noquote() << QStringLiteral("[HttpClient] <-- %1 %2")
+                              .arg(m_lastStatusCode).arg(request.url().toString());
+    if (!responseBody.isEmpty())
+        qDebug().noquote() << "[HttpClient]     response:" << responseBody;
+
+    if (reply->error() != QNetworkReply::NoError) {
+        m_lastError = reply->errorString();
+        qWarning().noquote() << QStringLiteral("[HttpClient]     network error: %1").arg(m_lastError);
+        if (!responseBody.isEmpty())
+            m_lastError += QStringLiteral(": ") + QString::fromUtf8(responseBody);
+    }
+
+    if (m_lastStatusCode == 0)
+        qWarning().noquote()
+            << "[HttpClient]     (status 0 — server unreachable or connection refused)";
+
+    reply->deleteLater();
+    return responseBody;
+}
+
+QByteArray HttpClient::get(const QString &endpoint, const QUrlQuery &query)
+{
+    auto req = buildRequest(endpoint, query);
+    return executeRequest(req, "GET", {});
+}
+
+QByteArray HttpClient::post(const QString &endpoint, const QByteArray &body,
+                             const QStringList &preferHeaders)
+{
+    auto req = buildRequest(endpoint);
+    if (!preferHeaders.isEmpty())
+        req.setRawHeader("Prefer", preferHeaders.join(QLatin1Char(',')).toUtf8());
+    return executeRequest(req, "POST", body);
+}
+
+QByteArray HttpClient::patch(const QString &endpoint, const QUrlQuery &query,
+                              const QByteArray &body, const QStringList &preferHeaders)
+{
+    auto req = buildRequest(endpoint, query);
+    if (!preferHeaders.isEmpty())
+        req.setRawHeader("Prefer", preferHeaders.join(QLatin1Char(',')).toUtf8());
+    return executeRequest(req, "PATCH", body);
+}

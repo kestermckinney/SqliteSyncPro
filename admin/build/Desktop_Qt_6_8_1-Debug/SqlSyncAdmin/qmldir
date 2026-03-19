@@ -1,0 +1,10 @@
+module SqlSyncAdmin
+typeinfo SQLSyncAdmin.qmltypes
+prefer :/SqlSyncAdmin/
+WizardSidebar 1.0 qml/WizardSidebar.qml
+ConnectionPage 1.0 qml/pages/ConnectionPage.qml
+ConfigurePage 1.0 qml/pages/ConfigurePage.qml
+InstallPage 1.0 qml/pages/InstallPage.qml
+SummaryPage 1.0 qml/pages/SummaryPage.qml
+UsersPage 1.0 qml/pages/UsersPage.qml
+

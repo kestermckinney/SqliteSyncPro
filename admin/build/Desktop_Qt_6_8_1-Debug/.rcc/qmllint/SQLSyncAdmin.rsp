@@ -1,0 +1,16 @@
+--bare
+-I
+/home/paulmckinney/Documents/SqliteSyncPro/admin/build/Desktop_Qt_6_8_1-Debug
+-I
+/home/paulmckinney/Qt/6.8.1/gcc_64/qml
+--resource
+/home/paulmckinney/Documents/SqliteSyncPro/admin/build/Desktop_Qt_6_8_1-Debug/.qt/rcc/qmake_SqlSyncAdmin.qrc
+--resource
+/home/paulmckinney/Documents/SqliteSyncPro/admin/build/Desktop_Qt_6_8_1-Debug/.qt/rcc/SQLSyncAdmin_raw_qml_0.qrc
+/home/paulmckinney/Documents/SqliteSyncPro/admin/qml/main.qml
+/home/paulmckinney/Documents/SqliteSyncPro/admin/qml/WizardSidebar.qml
+/home/paulmckinney/Documents/SqliteSyncPro/admin/qml/pages/ConnectionPage.qml
+/home/paulmckinney/Documents/SqliteSyncPro/admin/qml/pages/ConfigurePage.qml
+/home/paulmckinney/Documents/SqliteSyncPro/admin/qml/pages/InstallPage.qml
+/home/paulmckinney/Documents/SqliteSyncPro/admin/qml/pages/SummaryPage.qml
+/home/paulmckinney/Documents/SqliteSyncPro/admin/qml/pages/UsersPage.qml

@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#1e88e5"/>
+      <stop offset="100%" stop-color="#0d47a1"/>
+    </linearGradient>
+    <!-- Soft shadow for depth -->
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- Rounded-square app background -->
+  <rect width="100" height="100" rx="18" ry="18" fill="url(#bg)"/>
+
+  <!--
+    Sync arrows: two arcs on a circle centered at (50,50) r=30.
+
+    Top arc  — starts at SVG 215° (upper-left) → ends at SVG 325° (upper-right),
+                sweeping clockwise across the top.
+    215°: x=50+30·cos(215°)=25.4  y=50+30·sin(215°)=32.8
+    325°: x=50+30·cos(325°)=74.6  y=50+30·sin(325°)=32.8
+
+    Bottom arc — starts at SVG 35° (lower-right) → ends at SVG 145° (lower-left),
+                  sweeping clockwise across the bottom.
+    35°:  x=74.6  y=67.2
+    145°: x=25.4  y=67.2
+  -->
+
+  <!-- Top sync arc -->
+  <path d="M 25.4 32.8 A 30 30 0 0 1 74.6 32.8"
+        fill="none" stroke="white" stroke-width="7" stroke-linecap="butt"/>
+  <!--
+    Arrowhead at SVG 325°.  Tangent (clockwise) = direction 325°+90°=55°.
+    cos55°=0.574  sin55°=0.819  →  arrow points down-right.
+    Tip (74.6,32.8); base centre 10 units back along -tangent:
+      (74.6−5.74, 32.8−8.19) = (68.86, 24.61)
+    Perp (±5 units): (−0.819,+0.574)·5 and (+0.819,−0.574)·5
+      v1 = (64.76, 27.48)   v2 = (72.96, 21.74)
+  -->
+  <polygon points="74.6,32.8 64.8,27.5 73.0,21.7" fill="white"/>
+
+  <!-- Bottom sync arc -->
+  <path d="M 74.6 67.2 A 30 30 0 0 1 25.4 67.2"
+        fill="none" stroke="white" stroke-width="7" stroke-linecap="butt"/>
+  <!--
+    Arrowhead at SVG 145°.  Tangent (clockwise) = 145°+90°=235°.
+    cos235°=−0.574  sin235°=−0.819  →  arrow points up-left.
+    Tip (25.4,67.2); base centre 10 units back: (31.14, 75.39)
+    Perp (±5 units): (+0.819,−0.574)·5 and (−0.819,+0.574)·5
+      v1 = (35.24, 72.52)   v2 = (27.04, 78.26)
+  -->
+  <polygon points="25.4,67.2 35.2,72.5 27.0,78.3" fill="white"/>
+
+  <!-- Note lines in the centre — three horizontal rules suggesting a document -->
+  <line x1="34" y1="44" x2="66" y2="44" stroke="white" stroke-width="4.5" stroke-linecap="round"/>
+  <line x1="34" y1="52" x2="66" y2="52" stroke="white" stroke-width="4.5" stroke-linecap="round"/>
+  <line x1="34" y1="60" x2="52" y2="60" stroke="white" stroke-width="4.5" stroke-linecap="round"/>
+</svg>

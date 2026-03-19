@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/">
+    <file alias="/SqlSyncAdmin">/home/paulmckinney/Documents/SqliteSyncPro/admin/build/Desktop_Qt_6_8_1-Debug/SqlSyncAdmin</file>
+
+  </qresource>
+</RCC>

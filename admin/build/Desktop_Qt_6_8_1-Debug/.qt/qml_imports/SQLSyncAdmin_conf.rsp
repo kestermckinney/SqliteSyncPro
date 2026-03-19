@@ -1,0 +1,14 @@
+-rootPath
+/home/paulmckinney/Documents/SqliteSyncPro/admin
+-cmake-output
+-output-file
+/home/paulmckinney/Documents/SqliteSyncPro/admin/build/Desktop_Qt_6_8_1-Debug/.qt/qml_imports/SQLSyncAdmin_conf.cmake
+-importPath
+/home/paulmckinney/Documents/SqliteSyncPro/admin/build/Desktop_Qt_6_8_1-Debug/SqlSyncAdmin
+-importPath
+/home/paulmckinney/Documents/SqliteSyncPro/admin/build/Desktop_Qt_6_8_1-Debug
+-importPath
+/home/paulmckinney/Qt/6.8.1/gcc_64/qml
+-qrcFiles
+/home/paulmckinney/Documents/SqliteSyncPro/admin/build/Desktop_Qt_6_8_1-Debug/.qt/rcc/qmake_SqlSyncAdmin.qrc
+/home/paulmckinney/Documents/SqliteSyncPro/admin/build/Desktop_Qt_6_8_1-Debug/.qt/rcc/SQLSyncAdmin_raw_qml_0.qrc

@@ -1,0 +1,2 @@
+/home/paulmckinney/Documents/SqliteSyncPro/admin/build/Desktop_Qt_6_8_1-Debug/SQLSyncAdmin_autogen/include/../FVSNT77ZGO/moc_AdminController.cpp.json
+/home/paulmckinney/Documents/SqliteSyncPro/admin/build/Desktop_Qt_6_8_1-Debug/SQLSyncAdmin_autogen/include/../FVSNT77ZGO/moc_SetupWorker.cpp.json

@@ -1,0 +1,12 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file>sqlsyncadmin_16.png</file>
+        <file>sqlsyncadmin_24.png</file>
+        <file>sqlsyncadmin_32.png</file>
+        <file>sqlsyncadmin_48.png</file>
+        <file>sqlsyncadmin_64.png</file>
+        <file>sqlsyncadmin_128.png</file>
+        <file>sqlsyncadmin_256.png</file>
+        <file>sqlsyncadmin_512.png</file>
+    </qresource>
+</RCC>
