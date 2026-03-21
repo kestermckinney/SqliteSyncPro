@@ -56,10 +56,10 @@ QByteArray HttpClient::executeRequest(QNetworkRequest &request,
     m_lastStatusCode = 0;
     m_lastError.clear();
 
-    qDebug().noquote() << QStringLiteral("[HttpClient] --> %1 %2")
-                              .arg(QString::fromLatin1(verb), request.url().toString());
-    if (!body.isEmpty())
-        qDebug().noquote() << "[HttpClient]     body:" << body;
+    // qDebug().noquote() << QStringLiteral("[HttpClient] --> %1 %2")
+    //                           .arg(QString::fromLatin1(verb), request.url().toString());
+    // if (!body.isEmpty())
+    //     qDebug().noquote() << "[HttpClient]     body:" << body;
 
     QNetworkReply *reply = nullptr;
     if (verb == "GET") {
@@ -80,10 +80,10 @@ QByteArray HttpClient::executeRequest(QNetworkRequest &request,
     const QByteArray responseBody = reply->readAll();
     m_lastStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
-    qDebug().noquote() << QStringLiteral("[HttpClient] <-- %1 %2")
-                              .arg(m_lastStatusCode).arg(request.url().toString());
-    if (!responseBody.isEmpty())
-        qDebug().noquote() << "[HttpClient]     response:" << responseBody;
+    // qDebug().noquote() << QStringLiteral("[HttpClient] <-- %1 %2")
+    //                           .arg(m_lastStatusCode).arg(request.url().toString());
+    // if (!responseBody.isEmpty())
+    //     qDebug().noquote() << "[HttpClient]     response:" << responseBody;
 
     if (reply->error() != QNetworkReply::NoError) {
         m_lastError = reply->errorString();

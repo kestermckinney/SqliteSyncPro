@@ -3,6 +3,8 @@
 
 #include <QDialog>
 
+class SqliteSyncPro;
+
 namespace Ui {
 class SyncAPISettingsDialog;
 }
@@ -10,14 +12,11 @@ class SyncAPISettingsDialog;
 /**
  * SyncAPISettingsDialog – settings dialog for SqliteSyncPro.
  *
- * Lets the user configure the sync host type (Self-Hosted or Supabase),
- * server URL, credentials, and optional encryption passphrase.
+ * Reads the current settings from the SqliteSyncPro instance passed to the
+ * constructor and writes them back when the user clicks OK.
  *
- * Settings are persisted in QSettings("SqliteSyncPro", "SQLSyncAdmin")
- * under the group "sync_api", in the same location used by SQLSync Administrator.
- *
- * Sensitive values (password, encryption phrase, Supabase anon key) are
- * obfuscated with a machine-derived XOR key before storage.
+ * The calling application is responsible for persisting the settings
+ * (e.g. to QSettings) after the dialog is accepted.
  *
  * The Supabase Anon Key row is visible only when Supabase is selected.
  */
@@ -26,21 +25,18 @@ class SyncAPISettingsDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit SyncAPISettingsDialog(QWidget *parent = nullptr);
+    explicit SyncAPISettingsDialog(SqliteSyncPro *api, QWidget *parent = nullptr);
     ~SyncAPISettingsDialog() override;
-
-    // Convenience: load settings, exec dialog, save on accept.
-    // Returns QDialog::Accepted or QDialog::Rejected.
-    int execWithSettings();
 
 private slots:
     void onHostTypeChanged(int index);
 
 private:
-    void loadSettings();
-    void saveSettings();
+    void loadFromApi();
+    void saveToApi();
 
-    Ui::SyncAPISettingsDialog *ui;
+    SqliteSyncPro              *m_api;
+    Ui::SyncAPISettingsDialog  *ui;
 };
 
 #endif // SYNCAPISETTINGSDIALOG_H

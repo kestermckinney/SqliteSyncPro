@@ -6,6 +6,8 @@ qt_add_executable(invoice_demo
     main.cpp
     MainWindow.h
     MainWindow.cpp
+    InvoiceSettingsDialog.h
+    InvoiceSettingsDialog.cpp
     backend/InvoiceController.h
     backend/InvoiceController.cpp
 )

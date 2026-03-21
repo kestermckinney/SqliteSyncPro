@@ -1,7 +1,8 @@
 #include "MainWindow.h"
+#include "InvoiceSettingsDialog.h"
 #include "backend/InvoiceController.h"
-#include "sqlitesyncpro.h"
 
+#include <QCloseEvent>
 #include <QFont>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -43,7 +44,8 @@ MainWindow::MainWindow(QWidget *parent)
     QLabel *titleLabel = new QLabel(tr("Invoice Sync Demo"));
     titleLabel->setStyleSheet(QStringLiteral("color: white; font-size: 20px; font-weight: 500;"));
 
-    QLabel *subtitleLabel = new QLabel(tr("SqliteSyncPro \u2014 two-device push / pull simulation"));
+    QLabel *subtitleLabel = new QLabel(
+        tr("SqliteSyncPro \u2014 real-time two-device synchronisation"));
     subtitleLabel->setStyleSheet(QStringLiteral("color: #b0bec5; font-size: 12px;"));
 
     headerLayout->addWidget(titleLabel);
@@ -68,26 +70,35 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_progressBar = new QProgressBar;
     m_progressBar->setMinimum(0);
-    m_progressBar->setMaximum(0);   // indeterminate
+    m_progressBar->setMaximum(0);
     m_progressBar->setFixedWidth(120);
     m_progressBar->setFixedHeight(16);
     m_progressBar->setTextVisible(false);
     m_progressBar->setVisible(false);
 
-    m_runTestBtn = new QPushButton(tr("Run Test"));
-    m_runTestBtn->setStyleSheet(QStringLiteral(
+    m_startSyncBtn = new QPushButton(tr("Start Sync"));
+    m_startSyncBtn->setStyleSheet(QStringLiteral(
         "QPushButton { background-color: #009688; color: white; "
         "              border-radius: 4px; padding: 6px 16px; font-weight: 500; }"
         "QPushButton:hover    { background-color: #00897b; }"
         "QPushButton:disabled { background-color: #b2dfdb; color: #80cbc4; }"));
 
+    m_stopSyncBtn = new QPushButton(tr("Stop Sync"));
+    m_stopSyncBtn->setEnabled(false);
+    m_stopSyncBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background-color: #e53935; color: white; "
+        "              border-radius: 4px; padding: 6px 16px; font-weight: 500; }"
+        "QPushButton:hover    { background-color: #c62828; }"
+        "QPushButton:disabled { background-color: #ffcdd2; color: #ef9a9a; }"));
+
     toolbarLayout->addWidget(m_settingsBtn);
     toolbarLayout->addStretch();
     toolbarLayout->addWidget(m_progressBar);
-    toolbarLayout->addWidget(m_runTestBtn);
+    toolbarLayout->addWidget(m_startSyncBtn);
+    toolbarLayout->addWidget(m_stopSyncBtn);
 
     // ── Status bar ───────────────────────────────────────────────────────────
-    m_statusLabel = new QLabel(tr("Ready \u2014 configure settings and click Run Test."));
+    m_statusLabel = new QLabel(tr("Ready \u2014 configure settings and click Start Sync."));
     statusBar()->addWidget(m_statusLabel, 1);
     statusBar()->setSizeGripEnabled(false);
 
@@ -104,7 +115,6 @@ MainWindow::MainWindow(QWidget *parent)
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(0);
 
-        // Colored panel header
         QFrame *panelHeader = new QFrame;
         panelHeader->setFixedHeight(40);
         panelHeader->setStyleSheet(
@@ -124,7 +134,6 @@ MainWindow::MainWindow(QWidget *parent)
         phLayout->addStretch();
         phLayout->addWidget(subtitleLbl);
 
-        // Tree widget
         treeOut = new QTreeWidget;
         treeOut->setColumnCount(3);
         treeOut->setHeaderLabels({tr("Invoice / Line"), tr("Details"), tr("Status")});
@@ -142,10 +151,10 @@ MainWindow::MainWindow(QWidget *parent)
         return panel;
     };
 
-    splitter->addWidget(makePanel(tr("SOURCE DATABASE"), tr("pushed to server \u2191"),
-                                  QStringLiteral("#00796b"), m_sourceTree));
-    splitter->addWidget(makePanel(tr("DESTINATION DATABASE"), tr("\u2193 pulled from server"),
-                                  QStringLiteral("#3949ab"), m_destTree));
+    splitter->addWidget(makePanel(tr("CLIENT A DATABASE"), tr("local writes \u2191\u2193 synced"),
+                                  QStringLiteral("#00796b"), m_clientATree));
+    splitter->addWidget(makePanel(tr("CLIENT B DATABASE"), tr("local writes \u2191\u2193 synced"),
+                                  QStringLiteral("#3949ab"), m_clientBTree));
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 1);
 
@@ -156,11 +165,15 @@ MainWindow::MainWindow(QWidget *parent)
 
     // ── Connections ──────────────────────────────────────────────────────────
     connect(m_settingsBtn, &QPushButton::clicked, this, [this]() {
-        SqliteSyncPro api;
-        api.showSettingsDialog(this);
+        InvoiceSettingsDialog dlg(this);
+        dlg.exec();
     });
 
-    connect(m_runTestBtn, &QPushButton::clicked, m_controller, &InvoiceController::runSync);
+    connect(m_startSyncBtn, &QPushButton::clicked,
+            m_controller, &InvoiceController::startSync);
+
+    connect(m_stopSyncBtn, &QPushButton::clicked,
+            m_controller, &InvoiceController::shutdown);
 
     connect(m_controller, &InvoiceController::statusChanged, this, [this]() {
         m_statusLabel->setText(m_controller->statusText());
@@ -169,17 +182,44 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_controller, &InvoiceController::busyChanged, this, [this]() {
         const bool busy = m_controller->isBusy();
         m_settingsBtn->setEnabled(!busy);
-        m_runTestBtn->setEnabled(!busy);
+        m_startSyncBtn->setEnabled(!busy && !m_controller->isRunning());
+        m_stopSyncBtn->setEnabled(!busy && m_controller->isRunning());
         m_progressBar->setVisible(busy);
     });
 
-    connect(m_controller, &InvoiceController::sourceRecordsChanged, this, [this]() {
-        populateTree(m_sourceTree, m_controller->sourceRecords());
+    connect(m_controller, &InvoiceController::clientARecordsChanged, this, [this]() {
+        populateTree(m_clientATree, m_controller->clientARecords());
     });
 
-    connect(m_controller, &InvoiceController::destRecordsChanged, this, [this]() {
-        populateTree(m_destTree, m_controller->destRecords());
+    connect(m_controller, &InvoiceController::clientBRecordsChanged, this, [this]() {
+        populateTree(m_clientBTree, m_controller->clientBRecords());
     });
+
+    // Update button states when running state changes.
+    connect(m_controller, &InvoiceController::statusChanged, this, [this]() {
+        const bool running = m_controller->isRunning();
+        const bool busy    = m_controller->isBusy();
+        m_startSyncBtn->setEnabled(!busy && !running);
+        m_stopSyncBtn->setEnabled(!busy && running);
+    });
+
+    // When stopped signal fires (e.g. after shutdown during close), close window.
+    connect(m_controller, &InvoiceController::stopped, this, [this]() {
+        if (m_closing)
+            close();
+    });
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    if (m_controller->isRunning()) {
+        // Ask controller to stop; close when it signals stopped().
+        m_closing = true;
+        event->ignore();
+        m_controller->shutdown();
+    } else {
+        event->accept();
+    }
 }
 
 void MainWindow::populateTree(QTreeWidget *tree, const QVariantList &records)
@@ -194,7 +234,7 @@ void MainWindow::populateTree(QTreeWidget *tree, const QVariantList &records)
     for (const QVariant &v : records) {
         const QVariantMap row    = v.toMap();
         const bool        synced = row[QStringLiteral("synced")].toBool();
-        const QString statusText = synced ? tr("\u2713 synced") : tr("\u23f3 pending");
+        const QString statusText  = synced ? tr("\u2713 synced") : tr("\u23f3 pending");
         const QColor  statusColor = synced ? QColor(0x00897b) : QColor(0xf57c00);
 
         if (row[QStringLiteral("rowType")] == QLatin1String("invoice")) {

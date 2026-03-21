@@ -1,45 +1,42 @@
 #include "InvoiceController.h"
-
+#include "../InvoiceSettingsDialog.h"
 #include "sqlitesyncpro.h"
-#include "syncresult.h"
 
-#include <QDir>
-#include <QFile>
 #include <QDateTime>
-#include <QUuid>
-#include <QThread>
+#include <QReadLocker>
+#include <QRandomGenerator>
 #include <QSqlDatabase>
 #include <QSqlQuery>
-#include <QSqlRecord>
 #include <QSqlError>
+#include <QThread>
+#include <QTimer>
+#include <QUuid>
 #include <QVariantMap>
-#include <QReadWriteLock>
-#include <QRandomGenerator>
+#include <QWriteLocker>
 #include <QDebug>
 
 #include <atomic>
 #include <memory>
 
 // ---------------------------------------------------------------------------
-// Constants
+// Schema helpers
 // ---------------------------------------------------------------------------
 
-static constexpr int kTestDurationMs   = 2 * 60 * 1000; // 2 minutes of mutations (no syncing)
-static constexpr int kSyncIntervalMs   = 2000;           // ms between convergence sync rounds
-static constexpr int kMutateMinMs      = 200;            // shortest pause between mutations
-static constexpr int kMutateMaxMs      = 800;            // longest pause between mutations
-static constexpr int kQuietRoundsNeeded = 2;             // consecutive idle rounds to declare done
-static constexpr int kMaxConvergeRounds = 150;           // safety cap (~5 min at 2s/round)
-
-// ---------------------------------------------------------------------------
-// createInvoiceSchema
-// ---------------------------------------------------------------------------
-
-static bool createInvoiceSchema(QSqlDatabase &db)
+static void createInvoiceSchema(const QString &dbPath)
 {
-    QSqlQuery q(db);
+    const QString connName = QStringLiteral("inv_schema_%1")
+                                 .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connName);
+    db.setDatabaseName(dbPath);
+    if (!db.open()) {
+        qWarning() << "createInvoiceSchema: cannot open" << dbPath;
+        db = QSqlDatabase();
+        QSqlDatabase::removeDatabase(connName);
+        return;
+    }
 
-    bool ok = q.exec(R"(
+    QSqlQuery q(db);
+    q.exec(R"(
         CREATE TABLE IF NOT EXISTS invoices (
             id             TEXT    PRIMARY KEY,
             invoice_number TEXT    NOT NULL,
@@ -48,12 +45,7 @@ static bool createInvoiceSchema(QSqlDatabase &db)
             syncdate       INTEGER
         )
     )");
-    if (!ok) {
-        qWarning() << "createInvoiceSchema invoices:" << q.lastError().text();
-        return false;
-    }
-
-    ok = q.exec(R"(
+    q.exec(R"(
         CREATE TABLE IF NOT EXISTS invoice_lines (
             id           TEXT    PRIMARY KEY,
             invoice_id   TEXT    NOT NULL,
@@ -65,25 +57,48 @@ static bool createInvoiceSchema(QSqlDatabase &db)
             syncdate     INTEGER
         )
     )");
-    if (!ok) {
-        qWarning() << "createInvoiceSchema invoice_lines:" << q.lastError().text();
-        return false;
-    }
 
-    return true;
+    db.close();
+    db = QSqlDatabase();
+    QSqlDatabase::removeDatabase(connName);
 }
 
-// ---------------------------------------------------------------------------
-// insertSampleData
-// ---------------------------------------------------------------------------
-
-static void insertSampleData(QSqlDatabase &db)
+static bool isDatabaseEmpty(const QString &dbPath)
 {
+    const QString connName = QStringLiteral("inv_check_%1")
+                                 .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connName);
+    db.setDatabaseName(dbPath);
+    bool empty = true;
+    if (db.open()) {
+        QSqlQuery q(db);
+        q.exec("SELECT COUNT(*) FROM invoices");
+        if (q.next()) empty = (q.value(0).toInt() == 0);
+        db.close();
+    }
+    db = QSqlDatabase();
+    QSqlDatabase::removeDatabase(connName);
+    return empty;
+}
+
+static void seedData(const QString &dbPath)
+{
+    const QString connName = QStringLiteral("inv_seed_%1")
+                                 .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connName);
+    db.setDatabaseName(dbPath);
+    if (!db.open()) {
+        db = QSqlDatabase();
+        QSqlDatabase::removeDatabase(connName);
+        return;
+    }
+
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     QSqlQuery q(db);
 
     const QString inv1 = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    q.prepare("INSERT OR IGNORE INTO invoices (id,invoice_number,address,updateddate,syncdate) "
+    q.prepare("INSERT OR IGNORE INTO invoices "
+              "(id,invoice_number,address,updateddate,syncdate) "
               "VALUES (:id,:num,:addr,:upd,NULL)");
     q.bindValue(":id",   inv1);
     q.bindValue(":num",  "INV-0001");
@@ -107,7 +122,8 @@ static void insertSampleData(QSqlDatabase &db)
     q.exec();
 
     const QString inv2 = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    q.prepare("INSERT OR IGNORE INTO invoices (id,invoice_number,address,updateddate,syncdate) "
+    q.prepare("INSERT OR IGNORE INTO invoices "
+              "(id,invoice_number,address,updateddate,syncdate) "
               "VALUES (:id,:num,:addr,:upd,NULL)");
     q.bindValue(":id",   inv2);
     q.bindValue(":num",  "INV-0002");
@@ -129,87 +145,37 @@ static void insertSampleData(QSqlDatabase &db)
     q.bindValue(":qty",   3.0);  q.bindValue(":desc",  "Deluxe Gadget");
     q.bindValue(":price", 19.99); q.bindValue(":upd",  now + 3);
     q.exec();
-}
-
-// ---------------------------------------------------------------------------
-// readRecords – read invoices + lines for display in the ListView
-// ---------------------------------------------------------------------------
-
-static QVariantList readRecords(const QString &dbPath, const QString &connName)
-{
-    QVariantList result;
-
-    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connName);
-    db.setDatabaseName(dbPath);
-
-    if (!db.open()) {
-        qWarning() << "readRecords open failed:" << db.lastError().text();
-        db = QSqlDatabase();
-        QSqlDatabase::removeDatabase(connName);
-        return result;
-    }
-
-    QSqlQuery q(db);
-
-    q.exec("SELECT id, invoice_number, address, updateddate, syncdate "
-           "FROM invoices ORDER BY invoice_number");
-    while (q.next()) {
-        QVariantMap row;
-        row[QStringLiteral("rowType")]       = QStringLiteral("invoice");
-        row[QStringLiteral("id")]            = q.value(0).toString();
-        row[QStringLiteral("invoiceNumber")] = q.value(1).toString();
-        row[QStringLiteral("address")]       = q.value(2).toString();
-        row[QStringLiteral("updateddate")]   = q.value(3).toLongLong();
-        const QVariant sd                    = q.value(4);
-        row[QStringLiteral("synced")]        = !sd.isNull() && sd.toLongLong() == q.value(3).toLongLong();
-        result.append(row);
-    }
-
-    q.exec("SELECT l.id, l.invoice_id, l.line_number, l.quantity, l.description, l.price, "
-           "       l.updateddate, l.syncdate, i.invoice_number "
-           "FROM invoice_lines l "
-           "JOIN invoices i ON i.id = l.invoice_id "
-           "ORDER BY i.invoice_number, l.line_number");
-    while (q.next()) {
-        QVariantMap row;
-        row[QStringLiteral("rowType")]       = QStringLiteral("line");
-        row[QStringLiteral("id")]            = q.value(0).toString();
-        row[QStringLiteral("invoiceId")]     = q.value(1).toString();
-        row[QStringLiteral("lineNumber")]    = q.value(2).toInt();
-        row[QStringLiteral("quantity")]      = q.value(3).toDouble();
-        row[QStringLiteral("description")]   = q.value(4).toString();
-        row[QStringLiteral("price")]         = q.value(5).toDouble();
-        row[QStringLiteral("updateddate")]   = q.value(6).toLongLong();
-        const QVariant sd                    = q.value(7);
-        row[QStringLiteral("synced")]        = !sd.isNull() && sd.toLongLong() == q.value(6).toLongLong();
-        row[QStringLiteral("invoiceNumber")] = q.value(8).toString();
-        result.append(row);
-    }
 
     db.close();
     db = QSqlDatabase();
     QSqlDatabase::removeDatabase(connName);
-    return result;
 }
 
 // ---------------------------------------------------------------------------
 // mutateDatabaseThread
 //
-// Runs in its own QThread.  Randomly inserts new invoices/lines and updates
-// existing records until *stop becomes true.  Every write is wrapped in a
-// QWriteLocker so it coordinates safely with the sync engine's write lock.
+// Runs in its own QThread.  Randomly inserts new invoices / lines and updates
+// existing records until *stop becomes true.  Every write uses QWriteLocker
+// so it coordinates safely with the sync engine's write lock.
 // ---------------------------------------------------------------------------
 
-static void mutateDatabaseThread(const QString                             &dbPath,
-                                  const QString                             &connName,
-                                  QReadWriteLock                            *lock,
-                                  const std::shared_ptr<std::atomic<bool>>  &stop,
-                                  const std::shared_ptr<std::atomic<int>>   &counter)
+static void mutateDatabaseThread(const QString                            &dbPath,
+                                  const QString                            &connBaseName,
+                                  QReadWriteLock                           *lock,
+                                  const std::shared_ptr<std::atomic<bool>> &stop,
+                                  const std::shared_ptr<std::atomic<int>>  &counter)
 {
+    static constexpr int kMinMs = 300;
+    static constexpr int kMaxMs = 900;
+
+    const QString connName = QStringLiteral("%1_%2")
+                                 .arg(connBaseName,
+                                      QUuid::createUuid().toString(QUuid::WithoutBraces));
+
     QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connName);
     db.setDatabaseName(dbPath);
     if (!db.open()) {
-        qWarning() << connName << "mutator: could not open DB:" << db.lastError().text();
+        qWarning() << connName << "mutator: cannot open DB:" << db.lastError().text();
         db = QSqlDatabase();
         QSqlDatabase::removeDatabase(connName);
         return;
@@ -218,9 +184,8 @@ static void mutateDatabaseThread(const QString                             &dbPa
     QRandomGenerator rng = QRandomGenerator::securelySeeded();
 
     while (!stop->load(std::memory_order_relaxed)) {
-        // Random delay before each mutation
-        const int delay = kMutateMinMs + static_cast<int>(
-            rng.bounded(static_cast<quint32>(kMutateMaxMs - kMutateMinMs)));
+        const int delay = kMinMs + static_cast<int>(
+            rng.bounded(static_cast<quint32>(kMaxMs - kMinMs)));
         QThread::msleep(static_cast<unsigned long>(delay));
 
         if (stop->load(std::memory_order_relaxed))
@@ -235,8 +200,8 @@ static void mutateDatabaseThread(const QString                             &dbPa
             // INSERT a new invoice
             QSqlQuery q(db);
             q.prepare("INSERT INTO invoices "
-                      "(id, invoice_number, address, updateddate, syncdate) "
-                      "VALUES (:id, :num, :addr, :upd, NULL)");
+                      "(id,invoice_number,address,updateddate,syncdate) "
+                      "VALUES (:id,:num,:addr,:upd,NULL)");
             q.bindValue(":id",   QUuid::createUuid().toString(QUuid::WithoutBraces));
             q.bindValue(":num",  QStringLiteral("INV-%1").arg(rng.bounded(9000u) + 1000));
             q.bindValue(":addr", QStringLiteral("%1 Maple St, Anytown")
@@ -248,11 +213,11 @@ static void mutateDatabaseThread(const QString                             &dbPa
         } else if (action == 1) {
             // INSERT a new line into a random existing invoice
             QSqlQuery inv(db);
-            if (inv.exec("SELECT ID FROM invoices ORDER BY RANDOM() LIMIT 1") && inv.next()) {
+            if (inv.exec("SELECT id FROM invoices ORDER BY RANDOM() LIMIT 1") && inv.next()) {
                 const QString invId = inv.value(0).toString();
 
                 QSqlQuery maxQ(db);
-                maxQ.prepare("SELECT COALESCE(MAX(line_number), 0) "
+                maxQ.prepare("SELECT COALESCE(MAX(line_number),0) "
                              "FROM invoice_lines WHERE invoice_id = :inv");
                 maxQ.bindValue(":inv", invId);
                 maxQ.exec();
@@ -261,9 +226,9 @@ static void mutateDatabaseThread(const QString                             &dbPa
 
                 QSqlQuery q(db);
                 q.prepare("INSERT INTO invoice_lines "
-                          "(id, invoice_id, line_number, quantity, description, "
-                          " price, updateddate, syncdate) "
-                          "VALUES (:id, :inv, :ln, :qty, :desc, :price, :upd, NULL)");
+                          "(id,invoice_id,line_number,quantity,description,"
+                          " price,updateddate,syncdate) "
+                          "VALUES (:id,:inv,:ln,:qty,:desc,:price,:upd,NULL)");
                 q.bindValue(":id",    QUuid::createUuid().toString(QUuid::WithoutBraces));
                 q.bindValue(":inv",   invId);
                 q.bindValue(":ln",    nextLine);
@@ -279,9 +244,10 @@ static void mutateDatabaseThread(const QString                             &dbPa
             // UPDATE a random invoice's address
             QSqlQuery q(db);
             q.prepare("UPDATE invoices "
-                      "SET address = :addr, updateddate = :upd, syncdate = NULL "
-                      "WHERE id = (SELECT id FROM invoices ORDER BY RANDOM() LIMIT 1)");
-            q.bindValue(":addr", QStringLiteral("%1 Updated Blvd").arg(rng.bounded(999u) + 1));
+                      "SET address=:addr, updateddate=:upd, syncdate=NULL "
+                      "WHERE id=(SELECT id FROM invoices ORDER BY RANDOM() LIMIT 1)");
+            q.bindValue(":addr", QStringLiteral("%1 Updated Blvd")
+                                     .arg(rng.bounded(999u) + 1));
             q.bindValue(":upd",  now);
             q.exec();
             if (q.numRowsAffected() > 0)
@@ -291,8 +257,8 @@ static void mutateDatabaseThread(const QString                             &dbPa
             // UPDATE a random line's price
             QSqlQuery q(db);
             q.prepare("UPDATE invoice_lines "
-                      "SET price = :price, updateddate = :upd, syncdate = NULL "
-                      "WHERE id = (SELECT id FROM invoice_lines ORDER BY RANDOM() LIMIT 1)");
+                      "SET price=:price, updateddate=:upd, syncdate=NULL "
+                      "WHERE id=(SELECT id FROM invoice_lines ORDER BY RANDOM() LIMIT 1)");
             q.bindValue(":price", static_cast<double>(rng.bounded(10000u)) / 100.0);
             q.bindValue(":upd",   now);
             q.exec();
@@ -304,114 +270,71 @@ static void mutateDatabaseThread(const QString                             &dbPa
     db.close();
     db = QSqlDatabase();
     QSqlDatabase::removeDatabase(connName);
-    qDebug().noquote() << QStringLiteral("[mutator] %1 exited — total mutations: %2")
-                              .arg(connName).arg(counter->load());
+    qDebug().noquote()
+        << QStringLiteral("[mutator] %1 exited — total mutations: %2")
+               .arg(connBaseName).arg(counter->load());
 }
 
 // ---------------------------------------------------------------------------
-// compareDatabases
-//
-// Compares all invoice and invoice_line records (excluding SYNCDATE) between
-// two databases.  Returns an empty list on success, or one entry per mismatch.
+// readRecords – read invoices + lines for the tree display
 // ---------------------------------------------------------------------------
 
-static QStringList compareDatabases(const QString &srcPath, const QString &dstPath)
+QVariantList InvoiceController::readRecords(const QString &dbPath)
 {
-    QStringList mismatches;
+    QVariantList result;
 
-    QSqlDatabase srcDb = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), "cmp_src");
-    srcDb.setDatabaseName(srcPath);
-    QSqlDatabase dstDb = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), "cmp_dst");
-    dstDb.setDatabaseName(dstPath);
-
-    auto cleanup = [&]() {
-        srcDb.close(); srcDb = QSqlDatabase(); QSqlDatabase::removeDatabase("cmp_src");
-        dstDb.close(); dstDb = QSqlDatabase(); QSqlDatabase::removeDatabase("cmp_dst");
-    };
-
-    if (!srcDb.open() || !dstDb.open()) {
-        mismatches << QStringLiteral("Could not open databases for comparison");
-        cleanup();
-        return mismatches;
-    }
-
-    // Load all rows from a SELECT into a hash keyed by the ID column
-    auto loadRows = [](QSqlDatabase &db, const QString &sql) {
-        QHash<QString, QVariantMap> result;
-        QSqlQuery q(db);
-        if (!q.exec(sql)) return result;
-        while (q.next()) {
-            QVariantMap row;
-            const QSqlRecord rec = q.record();
-            for (int i = 0; i < rec.count(); ++i)
-                row[rec.fieldName(i)] = q.value(i);
-            result[row[QStringLiteral("id")].toString()] = row;
-        }
+    const QString connName = QStringLiteral("inv_read_%1")
+                                 .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connName);
+    db.setDatabaseName(dbPath);
+    if (!db.open()) {
+        db = QSqlDatabase();
+        QSqlDatabase::removeDatabase(connName);
         return result;
-    };
-
-    // ── invoices ──────────────────────────────────────────────────────────────
-    const QString invSql  = QStringLiteral(
-        "SELECT id, invoice_number, address, updateddate FROM invoices");
-    auto srcInv = loadRows(srcDb, invSql);
-    auto dstInv = loadRows(dstDb, invSql);
-
-    for (auto it = srcInv.constBegin(); it != srcInv.constEnd(); ++it) {
-        const QString shortId = it.key().left(8);
-        if (!dstInv.contains(it.key())) {
-            mismatches << QStringLiteral("invoices: %1 missing from dest").arg(shortId);
-        } else {
-            const auto &s = it.value(), &d = dstInv[it.key()];
-            for (const QString &col : {QStringLiteral("invoice_number"),
-                                       QStringLiteral("address"),
-                                       QStringLiteral("updateddate")}) {
-                if (s[col] != d[col])
-                    mismatches << QStringLiteral("invoices: %1 col %2 differs "
-                                                 "(src=%3 dst=%4)")
-                                      .arg(shortId, col,
-                                           s[col].toString(), d[col].toString());
-            }
-        }
     }
-    for (auto it = dstInv.constBegin(); it != dstInv.constEnd(); ++it)
-        if (!srcInv.contains(it.key()))
-            mismatches << QStringLiteral("invoices: %1 missing from source")
-                              .arg(it.key().left(8));
 
-    // ── invoice_lines ─────────────────────────────────────────────────────────
-    const QString lineSql = QStringLiteral(
-        "SELECT id, invoice_id, line_number, quantity, description, price, updateddate "
-        "FROM invoice_lines");
-    auto srcLines = loadRows(srcDb, lineSql);
-    auto dstLines = loadRows(dstDb, lineSql);
-
-    for (auto it = srcLines.constBegin(); it != srcLines.constEnd(); ++it) {
-        const QString shortId = it.key().left(8);
-        if (!dstLines.contains(it.key())) {
-            mismatches << QStringLiteral("invoice_lines: %1 missing from dest").arg(shortId);
-        } else {
-            const auto &s = it.value(), &d = dstLines[it.key()];
-            for (const QString &col : {QStringLiteral("invoice_id"),
-                                       QStringLiteral("line_number"),
-                                       QStringLiteral("quantity"),
-                                       QStringLiteral("description"),
-                                       QStringLiteral("price"),
-                                       QStringLiteral("updateddate")}) {
-                if (s[col] != d[col])
-                    mismatches << QStringLiteral("invoice_lines: %1 col %2 differs "
-                                                 "(src=%3 dst=%4)")
-                                      .arg(shortId, col,
-                                           s[col].toString(), d[col].toString());
-            }
-        }
+    QSqlQuery q(db);
+    q.exec("SELECT id,invoice_number,address,updateddate,syncdate "
+           "FROM invoices ORDER BY invoice_number");
+    while (q.next()) {
+        QVariantMap row;
+        row[QStringLiteral("rowType")]       = QStringLiteral("invoice");
+        row[QStringLiteral("id")]            = q.value(0).toString();
+        row[QStringLiteral("invoiceNumber")] = q.value(1).toString();
+        row[QStringLiteral("address")]       = q.value(2).toString();
+        row[QStringLiteral("updateddate")]   = q.value(3).toLongLong();
+        const QVariant sd = q.value(4);
+        row[QStringLiteral("synced")] =
+            !sd.isNull() && sd.toLongLong() == q.value(3).toLongLong();
+        result.append(row);
     }
-    for (auto it = dstLines.constBegin(); it != dstLines.constEnd(); ++it)
-        if (!srcLines.contains(it.key()))
-            mismatches << QStringLiteral("invoice_lines: %1 missing from source")
-                              .arg(it.key().left(8));
 
-    cleanup();
-    return mismatches;
+    q.exec("SELECT l.id,l.invoice_id,l.line_number,l.quantity,l.description,l.price,"
+           "       l.updateddate,l.syncdate,i.invoice_number "
+           "FROM invoice_lines l "
+           "JOIN invoices i ON i.id=l.invoice_id "
+           "ORDER BY i.invoice_number,l.line_number");
+    while (q.next()) {
+        QVariantMap row;
+        row[QStringLiteral("rowType")]       = QStringLiteral("line");
+        row[QStringLiteral("id")]            = q.value(0).toString();
+        row[QStringLiteral("invoiceId")]     = q.value(1).toString();
+        row[QStringLiteral("lineNumber")]    = q.value(2).toInt();
+        row[QStringLiteral("quantity")]      = q.value(3).toDouble();
+        row[QStringLiteral("description")]   = q.value(4).toString();
+        row[QStringLiteral("price")]         = q.value(5).toDouble();
+        row[QStringLiteral("updateddate")]   = q.value(6).toLongLong();
+        const QVariant sd = q.value(7);
+        row[QStringLiteral("synced")] =
+            !sd.isNull() && sd.toLongLong() == q.value(6).toLongLong();
+        row[QStringLiteral("invoiceNumber")] = q.value(8).toString();
+        result.append(row);
+    }
+
+    db.close();
+    db = QSqlDatabase();
+    QSqlDatabase::removeDatabase(connName);
+    return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -420,20 +343,41 @@ static QStringList compareDatabases(const QString &srcPath, const QString &dstPa
 
 InvoiceController::InvoiceController(QObject *parent)
     : QObject(parent)
+    , m_clientAApi(new SqliteSyncPro(this))
+    , m_clientBApi(new SqliteSyncPro(this))
 {
+    // Debounce timers: collect rowChanged bursts into a single display refresh.
+    m_clientARefreshTimer = new QTimer(this);
+    m_clientARefreshTimer->setSingleShot(true);
+    m_clientARefreshTimer->setInterval(300);
+    connect(m_clientARefreshTimer, &QTimer::timeout,
+            this, &InvoiceController::refreshClientADisplay);
+
+    m_clientBRefreshTimer = new QTimer(this);
+    m_clientBRefreshTimer->setSingleShot(true);
+    m_clientBRefreshTimer->setInterval(300);
+    connect(m_clientBRefreshTimer, &QTimer::timeout,
+            this, &InvoiceController::refreshClientBDisplay);
+
+    // Status timer: update mutation counts every 500 ms while running.
+    m_statusTimer = new QTimer(this);
+    m_statusTimer->setInterval(500);
+    connect(m_statusTimer, &QTimer::timeout,
+            this, &InvoiceController::updateStatus);
 }
 
 InvoiceController::~InvoiceController()
 {
-    if (m_workerThread) {
-        m_workerThread->quit();
-        m_workerThread->wait();
-    }
+    // Ensure mutator threads are stopped before the databases are closed.
+    if (m_mutateStop)
+        m_mutateStop->store(true, std::memory_order_relaxed);
+    if (m_mutatorThreadA) { m_mutatorThreadA->wait(); }
+    if (m_mutatorThreadB) { m_mutatorThreadB->wait(); }
 }
 
 void InvoiceController::setStatus(const QString &msg)
 {
-    m_statusText = msg;
+    m_status = msg;
     emit statusChanged();
 }
 
@@ -444,241 +388,197 @@ void InvoiceController::setBusy(bool busy)
 }
 
 // ---------------------------------------------------------------------------
-// runSync  –  5-minute concurrent stress test
-//
-// Architecture:
-//   Orchestrator thread (m_workerThread):
-//     • Authenticates source and dest SqliteSyncPro APIs via saved settings
-//     • Starts source mutator thread and dest mutator thread
-//     • Runs a sync loop every kSyncIntervalMs for kTestDurationMs
-//     • Signals mutators to stop, waits for them
-//     • Runs a final drain sync until both databases quiesce
-//     • Compares all records; reports PASS or FAIL
-//
-//   Source mutator thread:
-//     • Every 200–800 ms randomly INSERTs or UPDATEs in the source DB
-//     • Uses sourceApi.databaseLock() to coordinate with the sync engine
-//
-//   Dest mutator thread:
-//     • Same for the dest DB using destApi.databaseLock()
+// startSync
 // ---------------------------------------------------------------------------
 
-void InvoiceController::runSync()
+void InvoiceController::startSync()
 {
-    if (m_busy) return;
-    setBusy(true);
-    setStatus(QStringLiteral("Preparing test…"));
-
-    const QString sourcePath = QDir::tempPath() + QStringLiteral("/sqsp_invoice_source.db");
-    const QString destPath   = QDir::tempPath() + QStringLiteral("/sqsp_invoice_dest.db");
-    QFile::remove(sourcePath);
-    QFile::remove(destPath);
-
-    // Create and seed both databases on the main thread before handing off
-    auto openSetup = [](const QString &path, const QString &conn, bool seed) {
-        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), conn);
-        db.setDatabaseName(path);
-        if (db.open()) {
-            createInvoiceSchema(db);
-            if (seed) insertSampleData(db);
-            db.close();
-        } else {
-            qWarning() << conn << "setup failed:" << db.lastError().text();
-        }
-        db = QSqlDatabase();
-        QSqlDatabase::removeDatabase(conn);
-    };
-    openSetup(sourcePath, QStringLiteral("source_setup"), true);
-    openSetup(destPath,   QStringLiteral("dest_setup"),   false);
-
-    if (m_workerThread) {
-        m_workerThread->quit();
-        m_workerThread->wait();
-        m_workerThread->deleteLater();
-        m_workerThread = nullptr;
+    if (m_running) {
+        setStatus(QStringLiteral("Already running."));
+        return;
     }
 
-    m_workerThread = QThread::create([this, sourcePath, destPath]() {
+    setBusy(true);
+    m_stopCount    = 0;
+    m_shuttingDown = false;
+    setStatus(QStringLiteral("Configuring…"));
 
-        // ── Helper: report error and finish ───────────────────────────────────
-        auto reportError = [this](const QString &msg) {
-            QMetaObject::invokeMethod(this, [this, msg]() {
-                setStatus(msg);
-                setBusy(false);
-            }, Qt::QueuedConnection);
-        };
+    // Apply saved settings to both APIs.
+    InvoiceSettingsDialog::applyToApis(m_clientAApi, m_clientBApi);
 
-        // ── Authenticate and open ─────────────────────────────────────────────
-        SqliteSyncPro sourceApi, destApi;
+    const QString pathA = m_clientAApi->databasePath();
+    const QString pathB = m_clientBApi->databasePath();
 
-        if (!sourceApi.authenticateFromSettings()) {
-            reportError(QStringLiteral("Source auth failed: ") + sourceApi.lastError()); return;
-        }
-        if (!destApi.authenticateFromSettings()) {
-            reportError(QStringLiteral("Dest auth failed: ") + destApi.lastError()); return;
-        }
-        if (!sourceApi.openDatabase(sourcePath)) {
-            reportError(QStringLiteral("Source DB open failed: ") + sourceApi.lastError()); return;
-        }
-        if (!destApi.openDatabase(destPath)) {
-            reportError(QStringLiteral("Dest DB open failed: ") + destApi.lastError()); return;
-        }
+    if (pathA.isEmpty() || pathB.isEmpty()) {
+        setStatus(QStringLiteral("Database paths not configured. Open Settings… first."));
+        setBusy(false);
+        return;
+    }
 
-        sourceApi.addTable(QStringLiteral("invoices"),      50);
-        sourceApi.addTable(QStringLiteral("invoice_lines"), 50);
-        destApi.addTable  (QStringLiteral("invoices"),      50);
-        destApi.addTable  (QStringLiteral("invoice_lines"), 50);
+    // Prepare schemas; seed Client A if empty.
+    createInvoiceSchema(pathA);
+    if (isDatabaseEmpty(pathA))
+        seedData(pathA);
+    createInvoiceSchema(pathB);
 
-        QReadWriteLock *srcLock = sourceApi.databaseLock();
-        QReadWriteLock *dstLock = destApi.databaseLock();
+    // Connect signals before initialising (UniqueConnection avoids duplicates on re-start).
+    connect(m_clientAApi, &SqliteSyncPro::rowChanged,
+            this, &InvoiceController::onClientARowChanged, Qt::UniqueConnection);
+    connect(m_clientBApi, &SqliteSyncPro::rowChanged,
+            this, &InvoiceController::onClientBRowChanged, Qt::UniqueConnection);
+    connect(m_clientAApi, &SqliteSyncPro::syncStopped,
+            this, &InvoiceController::onSyncStopped, Qt::UniqueConnection);
+    connect(m_clientBApi, &SqliteSyncPro::syncStopped,
+            this, &InvoiceController::onSyncStopped, Qt::UniqueConnection);
 
-        // ── Phase 1: mutations only for kTestDurationMs (no syncing) ──────────
-        auto stop       = std::make_shared<std::atomic<bool>>(false);
-        auto srcCounter = std::make_shared<std::atomic<int>>(0);
-        auto dstCounter = std::make_shared<std::atomic<int>>(0);
+    // Initialise both APIs (opens DB, discovers tables, authenticates, starts loop).
+    setStatus(QStringLiteral("Initialising Client A…"));
+    if (!m_clientAApi->initialize()) {
+        setStatus(QStringLiteral("Client A init failed: ") + m_clientAApi->lastError());
+        setBusy(false);
+        return;
+    }
 
-        QThread *srcMutThread = QThread::create(
-            [srcPath = sourcePath, srcLock, stop, srcCounter]() {
-                mutateDatabaseThread(srcPath, QStringLiteral("src_mutator"),
-                                     srcLock, stop, srcCounter);
-            });
-        QThread *dstMutThread = QThread::create(
-            [dstPath = destPath, dstLock, stop, dstCounter]() {
-                mutateDatabaseThread(dstPath, QStringLiteral("dst_mutator"),
-                                     dstLock, stop, dstCounter);
-            });
+    setStatus(QStringLiteral("Initialising Client B…"));
+    if (!m_clientBApi->initialize()) {
+        setStatus(QStringLiteral("Client B init failed: ") + m_clientBApi->lastError());
+        m_clientAApi->shutdown();
+        setBusy(false);
+        return;
+    }
 
-        srcMutThread->start();
-        dstMutThread->start();
-        qDebug() << "[test] Phase 1: mutating for" << kTestDurationMs / 1000 << "s (no syncing)";
+    // Set up shared stop flag and mutation counters.
+    m_mutateStop        = std::make_shared<std::atomic<bool>>(false);
+    m_clientAChangeCount = std::make_shared<std::atomic<int>>(0);
+    m_clientBChangeCount = std::make_shared<std::atomic<int>>(0);
 
-        const qint64 mutationEnd = QDateTime::currentMSecsSinceEpoch() + kTestDurationMs;
-        while (QDateTime::currentMSecsSinceEpoch() < mutationEnd) {
-            QThread::msleep(500);
-            const qint64 remaining = qMax(0LL,
-                (mutationEnd - QDateTime::currentMSecsSinceEpoch()) / 1000);
-            const int srcMut = srcCounter->load(std::memory_order_relaxed);
-            const int dstMut = dstCounter->load(std::memory_order_relaxed);
-            QMetaObject::invokeMethod(this, [this, remaining, srcMut, dstMut]() {
-                setStatus(QStringLiteral(
-                    "Mutating — %1s left | src %2 changes  dst %3 changes")
-                    .arg(remaining).arg(srcMut).arg(dstMut));
-            }, Qt::QueuedConnection);
-        }
+    // Start mutator threads – each writes to its own database under its lock.
+    auto stopA    = m_mutateStop;
+    auto countA   = m_clientAChangeCount;
+    auto *lockA   = m_clientAApi->databaseLock();
 
-        stop->store(true, std::memory_order_relaxed);
-        srcMutThread->wait();
-        dstMutThread->wait();
-        delete srcMutThread;
-        delete dstMutThread;
-
-        const int totalSrcMut = srcCounter->load();
-        const int totalDstMut = dstCounter->load();
-        qDebug() << "[test] Phase 1 complete. src mutations:" << totalSrcMut
-                 << " dst mutations:" << totalDstMut;
-
-        // ── Phase 2: sync until both databases fully converge ─────────────────
-        qDebug() << "[test] Phase 2: syncing to convergence";
-
-        int syncRound      = 0;
-        int totalPushed    = 0;
-        int totalPulled    = 0;
-        int totalConflicts = 0;
-        int quietRounds    = 0;
-
-        while (syncRound < kMaxConvergeRounds) {
-            QThread::msleep(static_cast<unsigned long>(kSyncIntervalMs));
-
-            const SyncResult sr = sourceApi.synchronize();
-            const SyncResult dr = destApi.synchronize();
-            ++syncRound;
-
-            const int roundActivity = sr.totalPushed() + sr.totalPulled()
-                                    + dr.totalPushed() + dr.totalPulled();
-            totalPushed    += sr.totalPushed()    + dr.totalPushed();
-            totalPulled    += sr.totalPulled()    + dr.totalPulled();
-            totalConflicts += sr.totalConflicts() + dr.totalConflicts();
-
-            qDebug().noquote()
-                << QStringLiteral("[sync] round %1 | src +%2/-%3 | dst +%4/-%5 | quiet=%6")
-                       .arg(syncRound)
-                       .arg(sr.totalPushed()).arg(sr.totalPulled())
-                       .arg(dr.totalPushed()).arg(dr.totalPulled())
-                       .arg(quietRounds);
-
-            QMetaObject::invokeMethod(this,
-                [this, syncRound, totalPushed, totalPulled, totalConflicts, roundActivity]() {
-                    setStatus(QStringLiteral(
-                        "Syncing — round %1 | pushed %2  pulled %3  conflicts %4"
-                        "%5")
-                        .arg(syncRound)
-                        .arg(totalPushed).arg(totalPulled).arg(totalConflicts)
-                        .arg(roundActivity == 0
-                             ? QStringLiteral("  (idle)")
-                             : QStringLiteral("")));
-                }, Qt::QueuedConnection);
-
-            if (roundActivity == 0) {
-                ++quietRounds;
-                if (quietRounds >= kQuietRoundsNeeded)
-                    break;
-            } else {
-                quietRounds = 0;
-            }
-        }
-
-        qDebug() << "[test] Phase 2 complete after" << syncRound << "round(s)."
-                 << (quietRounds >= kQuietRoundsNeeded ? "Converged." : "Safety cap hit.");
-
-        // ── Read final state for display ──────────────────────────────────────
-        const QVariantList srcRecords =
-            readRecords(sourcePath, QStringLiteral("source_final_read"));
-        const QVariantList dstRecords =
-            readRecords(destPath,   QStringLiteral("dest_final_read"));
-
-        QMetaObject::invokeMethod(this, [this, srcRecords, dstRecords]() {
-            m_sourceRecords = srcRecords;
-            emit sourceRecordsChanged();
-            m_destRecords = dstRecords;
-            emit destRecordsChanged();
-        }, Qt::QueuedConnection);
-
-        // ── Verify ────────────────────────────────────────────────────────────
-        QMetaObject::invokeMethod(this, [this]() {
-            setStatus(QStringLiteral("Verifying database consistency…"));
-        }, Qt::QueuedConnection);
-
-        const QStringList mismatches = compareDatabases(sourcePath, destPath);
-
-        QString finalStatus;
-        if (mismatches.isEmpty()) {
-            finalStatus = QStringLiteral(
-                "\u2713 PASS — %1 sync rounds | src %2 mutations | dst %3 mutations "
-                "| pushed %4 | pulled %5 | conflicts %6 | all records identical")
-                    .arg(syncRound).arg(totalSrcMut).arg(totalDstMut)
-                    .arg(totalPushed).arg(totalPulled).arg(totalConflicts);
-            qDebug() << "[verify] PASS — source records:" << srcRecords.size()
-                     << "  dest records:" << dstRecords.size();
-        } else {
-            finalStatus = QStringLiteral(
-                "\u2717 FAIL — %1 mismatch(es). First: %2")
-                    .arg(mismatches.size()).arg(mismatches.first());
-            qDebug() << "[verify] FAIL —" << mismatches.size() << "mismatch(es):";
-            for (const auto &m : mismatches)
-                qDebug() << "  " << m;
-        }
-
-        QMetaObject::invokeMethod(this, [this, finalStatus]() {
-            setStatus(finalStatus);
-            setBusy(false);
-        }, Qt::QueuedConnection);
+    m_mutatorThreadA = QThread::create([pathA, lockA, stopA, countA]() {
+        mutateDatabaseThread(pathA, QStringLiteral("mutator_A"), lockA, stopA, countA);
+    });
+    connect(m_mutatorThreadA, &QThread::finished,
+            m_mutatorThreadA, &QObject::deleteLater);
+    connect(m_mutatorThreadA, &QThread::finished, this, [this]() {
+        m_mutatorThreadA = nullptr;
     });
 
-    m_workerThread->setParent(this);
-    connect(m_workerThread, &QThread::finished,
-            m_workerThread, &QObject::deleteLater);
-    connect(m_workerThread, &QThread::finished, this, [this]() {
-        m_workerThread = nullptr;
+    auto stopB  = m_mutateStop;
+    auto countB = m_clientBChangeCount;
+    auto *lockB = m_clientBApi->databaseLock();
+
+    m_mutatorThreadB = QThread::create([pathB, lockB, stopB, countB]() {
+        mutateDatabaseThread(pathB, QStringLiteral("mutator_B"), lockB, stopB, countB);
     });
-    m_workerThread->start();
+    connect(m_mutatorThreadB, &QThread::finished,
+            m_mutatorThreadB, &QObject::deleteLater);
+    connect(m_mutatorThreadB, &QThread::finished, this, [this]() {
+        m_mutatorThreadB = nullptr;
+    });
+
+    m_mutatorThreadA->start();
+    m_mutatorThreadB->start();
+
+    m_running      = true;
+    m_stopCount    = 0;
+    m_shuttingDown = false;
+    setBusy(false);
+
+    m_statusTimer->start();
+
+    // Populate initial display.
+    refreshClientADisplay();
+    refreshClientBDisplay();
+}
+
+// ---------------------------------------------------------------------------
+// shutdown
+// ---------------------------------------------------------------------------
+
+void InvoiceController::shutdown()
+{
+    if (!m_running) {
+        emit stopped();
+        return;
+    }
+
+    m_shuttingDown = true;
+    m_stopCount    = 0;
+    m_statusTimer->stop();
+    setStatus(QStringLiteral("Shutting down…"));
+
+    // Stop mutator threads first so they don't generate more work for the sync.
+    if (m_mutateStop)
+        m_mutateStop->store(true, std::memory_order_relaxed);
+
+    // Request sync loops to stop (they emit syncStopped when done).
+    m_clientAApi->shutdown();
+    m_clientBApi->shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// Slots
+// ---------------------------------------------------------------------------
+
+void InvoiceController::onClientARowChanged(const QString &, const QString &)
+{
+    m_clientARefreshTimer->start();
+}
+
+void InvoiceController::onClientBRowChanged(const QString &, const QString &)
+{
+    m_clientBRefreshTimer->start();
+}
+
+void InvoiceController::onSyncStopped()
+{
+    if (!m_running && !m_shuttingDown)
+        return;
+
+    ++m_stopCount;
+    if (m_stopCount >= 2) {
+        m_running = false;
+        setStatus(QStringLiteral("Sync stopped."));
+        if (m_shuttingDown)
+            emit stopped();
+    }
+}
+
+void InvoiceController::updateStatus()
+{
+    const int a = m_clientAChangeCount ? m_clientAChangeCount->load(std::memory_order_relaxed) : 0;
+    const int b = m_clientBChangeCount ? m_clientBChangeCount->load(std::memory_order_relaxed) : 0;
+    setStatus(QStringLiteral("Syncing — Client A: %1 local changes  |  Client B: %2 local changes")
+                  .arg(a).arg(b));
+}
+
+void InvoiceController::refreshClientADisplay()
+{
+    const QString path = m_clientAApi->databasePath();
+    if (path.isEmpty()) return;
+
+    QVariantList records;
+    {
+        QReadLocker rl(m_clientAApi->databaseLock());
+        records = readRecords(path);
+    }
+    m_clientARecords = records;
+    emit clientARecordsChanged();
+}
+
+void InvoiceController::refreshClientBDisplay()
+{
+    const QString path = m_clientBApi->databasePath();
+    if (path.isEmpty()) return;
+
+    QVariantList records;
+    {
+        QReadLocker rl(m_clientBApi->databaseLock());
+        records = readRecords(path);
+    }
+    m_clientBRecords = records;
+    emit clientBRecordsChanged();
 }

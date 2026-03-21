@@ -207,7 +207,7 @@ private slots:
 
     // ------------------------------------------------------------------
     // setDatabaseLock() replaces the internal lock; databaseLock() returns
-    // the external one.
+    // the external one.  Passing null resets to the internal lock.
     // ------------------------------------------------------------------
     void test_setDatabaseLock_replacesInternalLock()
     {
@@ -216,9 +216,11 @@ private slots:
         SqliteSyncPro api;
         QVERIFY(api.openDatabase(dbPath));
 
+        QReadWriteLock *original = api.databaseLock();
+        QVERIFY(original != nullptr);
+
         QReadWriteLock externalLock;
         api.setDatabaseLock(&externalLock);
-
         QCOMPARE(api.databaseLock(), &externalLock);
 
         // Passing null resets to the internal lock.

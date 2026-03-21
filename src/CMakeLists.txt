@@ -15,6 +15,8 @@ add_library(SqliteSyncProLib STATIC
     syncengine.cpp
     syncworker.h
     syncworker.cpp
+    syncloopworker.h
+    syncloopworker.cpp
     sqlitesyncpro.h
     sqlitesyncpro.cpp
     syncapisettingsdialog.h syncapisettingsdialog.cpp syncapisettingsdialog.ui

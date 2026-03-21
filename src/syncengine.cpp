@@ -495,6 +495,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                 ++pulled;
                 if (m_dbLock) m_dbLock->unlock();
                 emit progress(config.tableName, pulled, -1);
+                emit rowChanged(config.tableName, recordId);
             } else {
                 if (m_dbLock) m_dbLock->unlock();
                 qWarning() << "UPDATE failed for" << recordId
@@ -535,6 +536,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                 ++pulled;
                 if (m_dbLock) m_dbLock->unlock();
                 emit progress(config.tableName, pulled, -1);
+                emit rowChanged(config.tableName, recordId);
             } else {
                 if (m_dbLock) m_dbLock->unlock();
                 qWarning() << "INSERT failed for" << recordId

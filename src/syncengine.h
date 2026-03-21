@@ -84,6 +84,7 @@ public:
 
 signals:
     void progress(const QString &tableName, int processed, int total);
+    void rowChanged(const QString &tableName, const QString &id);
 
 private:
     int  pushLocalChanges(const SyncTableConfig &config, TableSyncResult &result);

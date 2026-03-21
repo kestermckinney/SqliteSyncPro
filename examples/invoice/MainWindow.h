@@ -4,6 +4,7 @@
 #include <QVariantList>
 
 class InvoiceController;
+class QCloseEvent;
 class QLabel;
 class QProgressBar;
 class QPushButton;
@@ -16,15 +17,21 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(QWidget *parent = nullptr);
 
+protected:
+    void closeEvent(QCloseEvent *event) override;
+
 private:
     void populateTree(QTreeWidget *tree, const QVariantList &records);
 
     InvoiceController *m_controller;
 
     QPushButton  *m_settingsBtn;
-    QPushButton  *m_runTestBtn;
+    QPushButton  *m_startSyncBtn;
+    QPushButton  *m_stopSyncBtn;
     QProgressBar *m_progressBar;
     QLabel       *m_statusLabel;
-    QTreeWidget  *m_sourceTree;
-    QTreeWidget  *m_destTree;
+    QTreeWidget  *m_clientATree;
+    QTreeWidget  *m_clientBTree;
+
+    bool m_closing = false;
 };
