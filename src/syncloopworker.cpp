@@ -95,6 +95,11 @@ void SyncLoopWorker::run()
             }
             emit syncCompleted(combined);
 
+            // Stop the loop on decryption failures — the phrase is wrong and
+            // continuing would show the same warning dialog on every interval.
+            if (combined.totalDecryptionFailures() > 0)
+                break;
+
             // Sleep for the interval, waking early if stop is requested.
             QMutexLocker locker(&m_stopMutex);
             if (!m_stopRequested)

@@ -101,7 +101,7 @@ ConnectionPage::ConnectionPage(AdminController *controller, QWidget *parent)
         col->setSpacing(4);
         col->addWidget(new QLabel(QStringLiteral("Database Name")));
         m_dbNameEdit = new QLineEdit;
-        m_dbNameEdit->setPlaceholderText(QStringLiteral("sqlitesyncpro"));
+        m_dbNameEdit->setPlaceholderText(QStringLiteral("postgres"));
         m_dbNameEdit->setText(m_controller->dbName());
         col->addWidget(m_dbNameEdit);
         form->addLayout(col);

@@ -19,3 +19,4 @@ add_subdirectory(tests)
 add_subdirectory(examples/invoice)
 
 add_subdirectory(admin)
+

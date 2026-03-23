@@ -6,10 +6,11 @@
 struct TableSyncResult
 {
     QString tableName;
-    int     pushed    = 0;
-    int     pulled    = 0;
-    int     conflicts = 0;   // server was newer; server record wins, resolved in pull phase
-    bool    success   = true;
+    int     pushed             = 0;
+    int     pulled             = 0;
+    int     conflicts          = 0;   // server was newer; server record wins, resolved in pull phase
+    int     decryptionFailures = 0;   // records skipped because decryption failed (wrong key)
+    bool    success            = true;
     QString errorMessage;
 };
 
@@ -37,6 +38,13 @@ struct SyncResult
     {
         int n = 0;
         for (const auto &r : tableResults) n += r.conflicts;
+        return n;
+    }
+
+    int totalDecryptionFailures() const
+    {
+        int n = 0;
+        for (const auto &r : tableResults) n += r.decryptionFailures;
         return n;
     }
 };

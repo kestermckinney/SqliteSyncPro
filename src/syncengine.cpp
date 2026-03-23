@@ -136,15 +136,10 @@ SyncResult SyncEngine::synchronizeTable(const SyncTableConfig &config)
         return result;
     }
 
-    const int pushed = pushLocalChanges(config, tableResult);
-    if (pushed < 0) {
-        tableResult.success = false;
-        result.success      = false;
-        result.tableResults.append(tableResult);
-        return result;
-    }
-    tableResult.pushed = pushed;
-
+    // Pull before push: this validates that decryption works with the current
+    // encryption phrase before we overwrite any server data.  If decryption
+    // fails here it means the phrase is wrong; we skip the push so the server
+    // data (encrypted with the previous correct phrase) is not corrupted.
     const int pulled = pullServerChanges(config, tableResult);
     if (pulled < 0) {
         tableResult.success = false;
@@ -153,6 +148,24 @@ SyncResult SyncEngine::synchronizeTable(const SyncTableConfig &config)
         return result;
     }
     tableResult.pulled = pulled;
+
+    if (tableResult.decryptionFailures > 0) {
+        tableResult.success      = false;
+        tableResult.errorMessage = QStringLiteral("Decryption failed: encryption phrase may be incorrect");
+        result.success           = false;
+        result.errorMessage      = tableResult.errorMessage;
+        result.tableResults.append(tableResult);
+        return result;
+    }
+
+    const int pushed = pushLocalChanges(config, tableResult);
+    if (pushed < 0) {
+        tableResult.success = false;
+        result.success      = false;
+        result.tableResults.append(tableResult);
+        return result;
+    }
+    tableResult.pushed = pushed;
 
     // If any records were pushed this round, peer devices may subsequently push
     // records whose UPDATEDDATE falls before our current last_pull_time (because
@@ -421,6 +434,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                 const QByteArray plain = RowEncryption::decrypt(encoded, m_encryptionKey);
                 if (plain.isEmpty()) {
                     qWarning() << "Pull: decryption failed for ID" << recordId;
+                    ++tableResult.decryptionFailures;
                     continue;
                 }
                 const QJsonDocument rowDoc = QJsonDocument::fromJson(plain);
@@ -428,6 +442,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                     rowData = rowDoc.object();
             } else {
                 qWarning() << "Pull: received encrypted JSONROWDATA but no key set for ID" << recordId;
+                ++tableResult.decryptionFailures;
                 continue;
             }
         } else {

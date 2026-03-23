@@ -107,7 +107,7 @@ UsersPage::UsersPage(AdminController *controller, QWidget *parent)
     m_table->setShowGrid(false);
     m_table->setAlternatingRowColors(true);
     m_table->setStyleSheet(QStringLiteral(
-        "QTableWidget { border: none; alternate-background-color: #eceff1; }"
+        "QTableWidget { border: none; alternate-background-color: gray; }"
         "QTableWidget::item { padding: 4px 8px; font-size: 13px; border: none; }"));
     m_table->verticalHeader()->setVisible(false);
     m_table->verticalHeader()->setDefaultSectionSize(48);
@@ -124,7 +124,7 @@ UsersPage::UsersPage(AdminController *controller, QWidget *parent)
     m_snackLabel->setAlignment(Qt::AlignCenter);
     m_snackLabel->setFixedHeight(48);
     m_snackLabel->setStyleSheet(QStringLiteral(
-        "font-size: 13px; color: white; background-color: #2196f3;"));
+        "font-size: 13px; color: blue; background-color: #2196f3;"));
     m_snackLabel->setVisible(false);
     outer->addWidget(m_snackLabel);
 
@@ -174,7 +174,7 @@ void UsersPage::onUsersChanged()
                 QStringLiteral("yyyy-MM-dd"));
         }
         QTableWidgetItem *dateItem = new QTableWidgetItem(dateStr);
-        dateItem->setForeground(QColor(0x60, 0x7d, 0x8b));
+        //dateItem->setForeground(QColor(0x60, 0x7d, 0x8b));
         m_table->setItem(i, 1, dateItem);
 
         // Edit button
@@ -299,7 +299,7 @@ void UsersPage::showEditDialog(const QString &username)
     QLineEdit *usernameDisplay = new QLineEdit(username);
     usernameDisplay->setReadOnly(true);
     usernameDisplay->setStyleSheet(QStringLiteral(
-        "QLineEdit { background-color: #eceff1; border-radius: 4px; }"));
+        "QLineEdit { background-color: gray; border-radius: 4px; }"));
     layout->addWidget(usernameDisplay);
 
     layout->addWidget(new QLabel(QStringLiteral("New Password (min. 8 characters)")));
@@ -378,7 +378,7 @@ void UsersPage::showRemoveDialog(const QString &username)
     QPushButton *okBtn = buttons->button(QDialogButtonBox::Ok);
     okBtn->setText(QStringLiteral("Remove User"));
     okBtn->setStyleSheet(QStringLiteral(
-        "QPushButton { background-color: #c62828; color: white;"
+        "QPushButton { background-color: #c62828; color: blue;"
         "  padding: 6px 16px; border-radius: 4px; border: none; }"
         "QPushButton:hover { background-color: #b71c1c; }"
         "QPushButton:disabled { background-color: #ef9a9a; }"));

@@ -156,7 +156,7 @@ private:
 
     QString m_host      = QStringLiteral("localhost");
     int     m_port      = 5432;
-    QString m_dbName    = QStringLiteral("sqlitesyncpro");
+    QString m_dbName    = QStringLiteral("postgres");
     QString m_superuser = QStringLiteral("postgres");
     QString m_superPass;
     ServerMode m_serverMode = ServerMode::SelfHosted;

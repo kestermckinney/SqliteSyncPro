@@ -1,0 +1,13 @@
+{
+"dependencies": [
+    {
+      "name": "openssl"
+    },
+    {
+      "name": "hunspell"
+    },
+    {
+      "name": "libpq"
+    }
+  ]
+}   
