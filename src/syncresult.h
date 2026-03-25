@@ -10,6 +10,7 @@ struct TableSyncResult
     int     pulled             = 0;
     int     conflicts          = 0;   // server was newer; server record wins, resolved in pull phase
     int     decryptionFailures = 0;   // records skipped because decryption failed (wrong key)
+    bool    networkError       = false; // true when HTTP status == 0 (server unreachable)
     bool    success            = true;
     QString errorMessage;
 };
@@ -46,5 +47,12 @@ struct SyncResult
         int n = 0;
         for (const auto &r : tableResults) n += r.decryptionFailures;
         return n;
+    }
+
+    bool hasNetworkError() const
+    {
+        for (const auto &r : tableResults)
+            if (r.networkError) return true;
+        return false;
     }
 };

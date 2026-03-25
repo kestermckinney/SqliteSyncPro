@@ -100,11 +100,20 @@ void SyncLoopWorker::run()
             if (combined.totalDecryptionFailures() > 0)
                 break;
 
+            // Back off when the server is unreachable so we don't flood the log
+            // with repeated failures.  Use 5× the normal interval, capped at 5 minutes.
+            int waitMs = m_syncIntervalMs;
+            if (combined.hasNetworkError()) {
+                waitMs = qMin(m_syncIntervalMs * 5, 300000);
+                qWarning().noquote()
+                    << QStringLiteral("[SyncLoopWorker] Network unreachable; backing off %1 ms before retry")
+                           .arg(waitMs);
+            }
+
             // Sleep for the interval, waking early if stop is requested.
             QMutexLocker locker(&m_stopMutex);
             if (!m_stopRequested)
-                m_stopCondition.wait(&m_stopMutex,
-                                     static_cast<unsigned long>(m_syncIntervalMs));
+                m_stopCondition.wait(&m_stopMutex, static_cast<unsigned long>(waitMs));
             if (m_stopRequested)
                 break;
         }

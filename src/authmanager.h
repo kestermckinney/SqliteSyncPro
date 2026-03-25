@@ -50,6 +50,7 @@ public:
 signals:
     void authenticated();
     void authenticationFailed(const QString &reason);
+    void networkError(const QString &reason);  // emitted when server is unreachable (HTTP status 0)
 
 private:
     QString m_token;

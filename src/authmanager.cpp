@@ -47,7 +47,7 @@ bool AuthManager::login(HttpClient   *client,
         if (!client->apiKey().isEmpty())
             req.setRawHeader("apikey", client->apiKey().toUtf8());
 
-        qDebug() << "[AuthManager::login] POST" << authEndpoint;
+        qInfo() << "[AuthManager::login] POST" << authEndpoint;
 
         QNetworkReply *reply = nam.post(req, payload);
         QEventLoop loop;
@@ -64,14 +64,23 @@ bool AuthManager::login(HttpClient   *client,
         statusCode = client->lastStatusCode();
     }
 
-    qDebug() << "[AuthManager::login] status=" << statusCode;
+    qInfo() << "[AuthManager::login] status=" << statusCode;
 
     if (statusCode < 200 || statusCode >= 300) {
         const QString reason = QStringLiteral("HTTP %1: %2")
                                    .arg(statusCode)
                                    .arg(QString::fromUtf8(response));
         qWarning() << "[AuthManager::login]" << reason;
-        emit authenticationFailed(reason);
+        // Status 0 means the server was unreachable (network down / connection refused).
+        // Emit networkError rather than authenticationFailed so callers can distinguish
+        // a connectivity problem from bad credentials.
+        if (statusCode == 0) {
+            qWarning() << "[AuthManager::login] Network error — server unreachable (status 0)";
+            emit networkError(reason);
+        } else {
+            qWarning() << "[AuthManager::login] Authentication failed — HTTP" << statusCode;
+            emit authenticationFailed(reason);
+        }
         return false;
     }
 
@@ -103,7 +112,7 @@ bool AuthManager::login(HttpClient   *client,
     // For Supabase: every PostgREST request also needs apikey: <anon_key>.
     // The apiKey was already set on the client by the caller; setAuthToken()
     // above does not clear it, so subsequent sync calls carry both headers.
-    qDebug() << "[AuthManager::login] JWT obtained successfully";
+    qInfo() << "[AuthManager::login] JWT obtained successfully";
     emit authenticated();
     return true;
 }
