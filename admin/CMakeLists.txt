@@ -85,14 +85,6 @@ target_link_libraries(SQLSyncAdmin
         Qt6::Network
 )
 
-if(WIN32)
-    add_custom_command(TARGET SQLSyncAdmin POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_CURRENT_BINARY_DIR}/../vcpkg_installed/x64-windows/bin/ ${CMAKE_CURRENT_BINARY_DIR}/
-        COMMAND ${CMAKE_COMMAND} -E echo "Copying vcpkg dlls"
-        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/../vcpkg_installed/x64-windows/bin
-    )
-endif()
-
 # ── Notes ─────────────────────────────────────────────────────────────────────
 # The developer must have libpq (PostgreSQL client library) installed:
 #   Linux:   sudo apt install libpq-dev   (or dnf install libpq-devel)

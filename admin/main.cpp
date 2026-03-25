@@ -27,5 +27,4 @@ int main(int argc, char *argv[])
     return app.exec();
 }
 
-//TODO: sqlsyncadmin doesn't drop users when you drop all the data
 
