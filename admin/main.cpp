@@ -4,7 +4,12 @@
 
 int main(int argc, char *argv[])
 {
+    QCoreApplication::addLibraryPath("./site-packages/PyQt6/Qt6/bin");
+    QCoreApplication::addLibraryPath("./site-packages/PyQt6/Qt6/plugins");
+    QCoreApplication::addLibraryPath("./site-packages/PyQt6/Qt6/plugins/bin");
+
     QApplication app(argc, argv);
+
     app.setApplicationName(QStringLiteral("SQLSync Administrator"));
     app.setOrganizationName(QStringLiteral("SqliteSyncPro"));
 

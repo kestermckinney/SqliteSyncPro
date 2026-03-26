@@ -36,7 +36,7 @@ endif()
 
 # ── Executable ────────────────────────────────────────────────────────────────
 
-qt_add_executable(SQLSyncAdmin
+qt_add_executable(SQLSyncAdmin WIN32
     main.cpp
     backend/ServerMode.h
     backend/AdminController.h
@@ -84,6 +84,25 @@ target_link_libraries(SQLSyncAdmin
         Qt6::Sql
         Qt6::Network
 )
+
+# ── Copy vcpkg PostgreSQL runtime DLLs next to the executable ─────────────────
+# Qt's QPSQL driver plugin (qsqlpsql.dll) needs libpq.dll at runtime.
+# vcpkg puts release DLLs in x64-windows/bin and debug in x64-windows/debug/bin.
+# Copying them here means the exe finds them in both Debug and Release without
+# any PATH changes in Qt Creator run configurations.
+if(WIN32)
+    set(_VCPKG_BIN_DIR "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows")
+    set(_PG_DLLS libpq.dll libpgtypes.dll libecpg.dll libecpg_compat.dll)
+
+    foreach(_dll ${_PG_DLLS})
+        add_custom_command(TARGET SQLSyncAdmin POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<IF:$<CONFIG:Debug>,${_VCPKG_BIN_DIR}/debug/bin/${_dll},${_VCPKG_BIN_DIR}/bin/${_dll}>"
+                "$<TARGET_FILE_DIR:SQLSyncAdmin>/${_dll}"
+            COMMENT "Copying ${_dll} for $<CONFIG>"
+        )
+    endforeach()
+endif()
 
 # ── Notes ─────────────────────────────────────────────────────────────────────
 # The developer must have libpq (PostgreSQL client library) installed:
