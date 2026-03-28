@@ -806,6 +806,46 @@ SyncResult SqliteSyncPro::synchronizeTable(const QString &tableName)
     return result;
 }
 
+bool SqliteSyncPro::syncAll()
+{
+    QList<SyncTableConfig> tables;
+    {
+        QMutexLocker lock(&m_mutex);
+        if (!m_dbOpen || m_tables.isEmpty())
+            return false;
+        tables = m_tables;
+    }
+
+    QWriteLocker dbLock(m_dbLock);
+
+    if (!m_persistentDb.isOpen())
+        return false;
+
+    m_persistentDb.transaction();
+
+    // Mark every row in every sync table as dirty so it gets pushed
+    for (const SyncTableConfig &cfg : tables) {
+        QSqlQuery q(m_persistentDb);
+        q.prepare(QStringLiteral("UPDATE \"%1\" SET syncdate = NULL").arg(cfg.tableName));
+        if (!q.exec())
+            qWarning().noquote()
+                << QStringLiteral("[SqliteSyncPro] syncAll: failed to reset syncdate for '%1': %2")
+                       .arg(cfg.tableName, q.lastError().text());
+    }
+
+    // Reset all pull high-water marks so every table re-pulls from the beginning
+    {
+        QSqlQuery q(m_persistentDb);
+        q.exec(QStringLiteral("DELETE FROM _sync_meta"));
+    }
+
+    m_persistentDb.commit();
+
+    qDebug().noquote() << QStringLiteral("[SqliteSyncPro] syncAll: %1 table(s) marked for full resync")
+                              .arg(tables.size());
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Status
 // ---------------------------------------------------------------------------

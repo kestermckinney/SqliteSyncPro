@@ -231,6 +231,22 @@ public:
     /** Synchronize a single named table in the CALLING thread. */
     SyncResult synchronizeTable(const QString &tableName);
 
+    /**
+     * Force a full resync of all configured tables.
+     *
+     * Sets syncdate = NULL on every row in every sync table (marking all
+     * local records as dirty so they are pushed to the server), and clears
+     * the _sync_meta table (resetting all pull high-water marks to 0 so
+     * every server record is pulled back down from the beginning).
+     *
+     * The next sync cycle after this call will push all local records and
+     * pull all server records, effectively refreshing both sides.
+     *
+     * Must be called after initialize() or after addTable() + openDatabase().
+     * Returns false if the database is not open or no tables are configured.
+     */
+    bool syncAll();
+
     // ------------------------------------------------------------------
     // Status
     // ------------------------------------------------------------------

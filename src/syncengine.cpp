@@ -167,18 +167,15 @@ SyncResult SyncEngine::synchronizeTable(const SyncTableConfig &config)
     }
     tableResult.pushed = pushed;
 
-    // If any records were pushed this round, peer devices may subsequently push
-    // records whose UPDATEDDATE falls before our current last_pull_time (because
-    // UPDATEDDATE reflects when the record was locally mutated, not when it was
-    // pushed to the server).  Reset the high-water mark to 0 so the next pull
-    // round re-scans from the beginning and picks up those early-timestamped
-    // records.  The extra server scan only happens while pushing is still active;
-    // once pushed == 0 the mark is left in place and normal incremental pulls resume.
+    // NOTE: we intentionally do NOT reset lastPullTime to 0 after a push.
+    // Resetting to 0 caused an infinite loop: while the push phase keeps
+    // finding records to send, the pull phase is forced to restart from the
+    // beginning every cycle and can never advance past the first batch.
+    // The pull query uses gte (>=) on updateddate, so it already re-fetches
+    // the high-water-mark boundary record on each cycle — no additional
+    // safety margin is needed.
     if (pushed > 0) {
-        if (m_dbLock) m_dbLock->lockForWrite();
-        setLastPullTime(config.tableName, 0);
-        if (m_dbLock) m_dbLock->unlock();
-        qDebug().noquote() << QStringLiteral("[SyncEngine] '%1': pushed %2 record(s); reset lastPullTime to 0 so next pull re-scans from the beginning")
+        qDebug().noquote() << QStringLiteral("[SyncEngine] '%1': pushed %2 record(s)")
                                   .arg(config.tableName).arg(pushed);
     }
 
@@ -449,6 +446,28 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                               .arg(serverRows.count() == config.batchSize
                                        ? QStringLiteral(" (batch limit hit — more may remain)")
                                        : QString());
+
+    if (serverRows.isEmpty())
+        qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': raw response: %2")
+                                  .arg(config.tableName,
+                                       QString::fromUtf8(response.left(500)));
+
+    if (!serverRows.isEmpty()) {
+        const qint64 firstTs = serverRows.first().toObject()
+                                   .value(QStringLiteral("updateddate")).toVariant().toLongLong();
+        const qint64 lastTs  = serverRows.last().toObject()
+                                   .value(QStringLiteral("updateddate")).toVariant().toLongLong();
+        if (firstTs == 0 || lastTs == 0)
+            qWarning().noquote() << QStringLiteral("[SyncEngine] Pull '%1': WARNING — updateddate parsed as 0; "
+                                                   "the column may be a non-integer type on the server "
+                                                   "(raw first value: '%2')")
+                                        .arg(config.tableName,
+                                             serverRows.first().toObject()
+                                                 .value(QStringLiteral("updateddate")).toVariant().toString());
+        else
+            qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': server ts range [%2 .. %3]")
+                                      .arg(config.tableName).arg(firstTs).arg(lastTs);
+    }
 
     // --- Step 2: upsert each record under a per-record write lock ---
     for (const QJsonValue &val : serverRows) {
