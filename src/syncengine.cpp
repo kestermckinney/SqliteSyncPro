@@ -174,10 +174,10 @@ SyncResult SyncEngine::synchronizeTable(const SyncTableConfig &config)
     // The pull query uses gte (>=) on updateddate, so it already re-fetches
     // the high-water-mark boundary record on each cycle — no additional
     // safety margin is needed.
-    if (pushed > 0) {
-        qDebug().noquote() << QStringLiteral("[SyncEngine] '%1': pushed %2 record(s)")
-                                  .arg(config.tableName).arg(pushed);
-    }
+    // if (pushed > 0) {
+    //     qDebug().noquote() << QStringLiteral("[SyncEngine] '%1': pushed %2 record(s)")
+    //                               .arg(config.tableName).arg(pushed);
+    // }
 
     result.tableResults.append(tableResult);
     return result;
@@ -242,8 +242,8 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
     }
     // Write lock is now released; HTTP calls follow with no lock held.
 
-    qDebug().noquote() << QStringLiteral("[SyncEngine] Push '%1': %2 local record(s) pending (batchSize=%3)")
-                              .arg(config.tableName).arg(pending.size()).arg(config.batchSize);
+    // qDebug().noquote() << QStringLiteral("[SyncEngine] Push '%1': %2 local record(s) pending (batchSize=%3)")
+    //                           .arg(config.tableName).arg(pending.size()).arg(config.batchSize);
 
     int pushed = 0;
 
@@ -397,8 +397,8 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
 
     const qint64 lastPull = getLastPullTime(config.tableName);
 
-    qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': lastPullTime=%2, batchSize=%3")
-                              .arg(config.tableName).arg(lastPull).arg(config.batchSize);
+    // qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': lastPullTime=%2, batchSize=%3")
+    //                           .arg(config.tableName).arg(lastPull).arg(config.batchSize);
 
     // --- Step 1: HTTP GET with no lock held ---
     QUrlQuery query;
@@ -440,34 +440,34 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
     int    pulled      = 0;
     qint64 maxPullTime = lastPull;
 
-    qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': server returned %2 row(s)%3")
-                              .arg(config.tableName)
-                              .arg(serverRows.count())
-                              .arg(serverRows.count() == config.batchSize
-                                       ? QStringLiteral(" (batch limit hit — more may remain)")
-                                       : QString());
+    // qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': server returned %2 row(s)%3")
+    //                           .arg(config.tableName)
+    //                           .arg(serverRows.count())
+    //                           .arg(serverRows.count() == config.batchSize
+    //                                    ? QStringLiteral(" (batch limit hit — more may remain)")
+    //                                    : QString());
 
-    if (serverRows.isEmpty())
-        qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': raw response: %2")
-                                  .arg(config.tableName,
-                                       QString::fromUtf8(response.left(500)));
+    // if (serverRows.isEmpty())
+    //     qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': raw response: %2")
+    //                               .arg(config.tableName,
+    //                                    QString::fromUtf8(response.left(500)));
 
-    if (!serverRows.isEmpty()) {
-        const qint64 firstTs = serverRows.first().toObject()
-                                   .value(QStringLiteral("updateddate")).toVariant().toLongLong();
-        const qint64 lastTs  = serverRows.last().toObject()
-                                   .value(QStringLiteral("updateddate")).toVariant().toLongLong();
-        if (firstTs == 0 || lastTs == 0)
-            qWarning().noquote() << QStringLiteral("[SyncEngine] Pull '%1': WARNING — updateddate parsed as 0; "
-                                                   "the column may be a non-integer type on the server "
-                                                   "(raw first value: '%2')")
-                                        .arg(config.tableName,
-                                             serverRows.first().toObject()
-                                                 .value(QStringLiteral("updateddate")).toVariant().toString());
-        else
-            qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': server ts range [%2 .. %3]")
-                                      .arg(config.tableName).arg(firstTs).arg(lastTs);
-    }
+    // if (!serverRows.isEmpty()) {
+    //     const qint64 firstTs = serverRows.first().toObject()
+    //                                .value(QStringLiteral("updateddate")).toVariant().toLongLong();
+    //     const qint64 lastTs  = serverRows.last().toObject()
+    //                                .value(QStringLiteral("updateddate")).toVariant().toLongLong();
+    //     if (firstTs == 0 || lastTs == 0)
+    //         qWarning().noquote() << QStringLiteral("[SyncEngine] Pull '%1': WARNING — updateddate parsed as 0; "
+    //                                                "the column may be a non-integer type on the server "
+    //                                                "(raw first value: '%2')")
+    //                                     .arg(config.tableName,
+    //                                          serverRows.first().toObject()
+    //                                              .value(QStringLiteral("updateddate")).toVariant().toString());
+    //     else
+    //         qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': server ts range [%2 .. %3]")
+    //                                   .arg(config.tableName).arg(firstTs).arg(lastTs);
+    // }
 
     // --- Step 2: upsert each record under a per-record write lock ---
     for (const QJsonValue &val : serverRows) {
@@ -535,8 +535,8 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                 if (m_dbLock) m_dbLock->unlock();
                 if (localTs > serverTs) {
                     ++tableResult.conflicts;
-                    qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': skipping id=%2 (local ts=%3 > server ts=%4)")
-                                              .arg(config.tableName, recordId).arg(localTs).arg(serverTs);
+                    // qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': skipping id=%2 (local ts=%3 > server ts=%4)")
+                    //                           .arg(config.tableName, recordId).arg(localTs).arg(serverTs);
                 }
                 continue;
             }
@@ -624,8 +624,8 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
         if (m_dbLock) m_dbLock->unlock();
     }
 
-    qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1' done: applied=%2, conflicts=%3, newPullTime=%4")
-                              .arg(config.tableName).arg(pulled).arg(tableResult.conflicts).arg(maxPullTime);
+    // qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1' done: applied=%2, conflicts=%3, newPullTime=%4")
+    //                           .arg(config.tableName).arg(pulled).arg(tableResult.conflicts).arg(maxPullTime);
 
     return pulled;
 }

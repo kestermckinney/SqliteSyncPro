@@ -256,6 +256,13 @@ public:
     bool    isInitialized()   const;
     QString lastError()       const;
 
+    /**
+     * Asynchronously compute sync completeness and emit syncStatusUpdated(percent).
+     * percent == 100 means no NULL syncdates locally AND local count == server count
+     * for every table.  Must be called after initialize().
+     */
+    void checkSyncStatus();
+
 signals:
     void syncProgress(const QString &tableName, int processed, int total);
     void syncCompleted(SyncResult result);
@@ -268,6 +275,12 @@ signals:
      * during a pull from the server.
      */
     void rowChanged(const QString &tableName, const QString &id);
+
+    /**
+     * Emitted by checkSyncStatus() once the background status check completes.
+     * percentComplete == 100 means fully synced; < 100 means sync still in progress.
+     */
+    void syncStatusUpdated(int percentComplete);
 
 private:
     bool    doAuthenticate();

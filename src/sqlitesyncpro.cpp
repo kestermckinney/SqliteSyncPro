@@ -10,6 +10,7 @@
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QSqlError>
+#include <QUrlQuery>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QReadWriteLock>
@@ -806,6 +807,140 @@ SyncResult SqliteSyncPro::synchronizeTable(const QString &tableName)
     return result;
 }
 
+// ---------------------------------------------------------------------------
+// Sync status check (background worker)
+// ---------------------------------------------------------------------------
+
+class SyncStatusWorker : public QObject
+{
+    Q_OBJECT
+public:
+    SyncStatusWorker(const QString &dbPath,
+                     const QString &serverUrl,
+                     const QString &authToken,
+                     const QString &supabaseKey,
+                     const QString &postgresTableName,
+                     const QList<SyncTableConfig> &tables,
+                     QReadWriteLock *dbLock)
+        : m_dbPath(dbPath)
+        , m_serverUrl(serverUrl)
+        , m_authToken(authToken)
+        , m_supabaseKey(supabaseKey)
+        , m_postgresTableName(postgresTableName)
+        , m_tables(tables)
+        , m_dbLock(dbLock)
+    {}
+
+signals:
+    void done(int percentComplete);
+
+public slots:
+    void run()
+    {
+        const QString connName = QStringLiteral("SyncStatus_%1")
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connName);
+        db.setDatabaseName(m_dbPath);
+
+        if (!db.open()) {
+            db = QSqlDatabase();
+            QSqlDatabase::removeDatabase(connName);
+            emit done(0);
+            return;
+        }
+
+        qint64 totalLocal  = 0;
+        qint64 syncedLocal = 0;
+
+        {
+            QReadLocker lock(m_dbLock);
+            for (const SyncTableConfig &cfg : m_tables) {
+                QSqlQuery q(db);
+                q.exec(QStringLiteral("SELECT COUNT(*) FROM \"%1\"").arg(cfg.tableName));
+                if (q.next())
+                    totalLocal += q.value(0).toLongLong();
+
+                q.exec(QStringLiteral("SELECT COUNT(*) FROM \"%1\" WHERE syncdate IS NOT NULL")
+                           .arg(cfg.tableName));
+                if (q.next())
+                    syncedLocal += q.value(0).toLongLong();
+            }
+        }
+
+        db.close();
+        db = QSqlDatabase();
+        QSqlDatabase::removeDatabase(connName);
+
+        // Query server counts per table (HEAD + Prefer: count=exact)
+        HttpClient http;
+        http.setBaseUrl(m_serverUrl);
+        http.setAuthToken(m_authToken);
+        http.setApiKey(m_supabaseKey);
+
+        qint64 totalServer = 0;
+        for (const SyncTableConfig &cfg : m_tables) {
+            QUrlQuery query;
+            query.addQueryItem(QStringLiteral("tablename"),
+                               QStringLiteral("eq.%1").arg(cfg.tableName));
+            const int count = http.countRows(m_postgresTableName, query);
+            if (count >= 0)
+                totalServer += count;
+        }
+
+        const qint64 grandTotal = qMax(totalLocal, totalServer);
+        int percent = (grandTotal == 0) ? 100
+                                        : static_cast<int>(syncedLocal * 100 / grandTotal);
+        percent = qBound(0, percent, 100);
+
+        emit done(percent);
+    }
+
+private:
+    QString              m_dbPath;
+    QString              m_serverUrl;
+    QString              m_authToken;
+    QString              m_supabaseKey;
+    QString              m_postgresTableName;
+    QList<SyncTableConfig> m_tables;
+    QReadWriteLock      *m_dbLock;
+};
+
+void SqliteSyncPro::checkSyncStatus()
+{
+    QString dbPath, serverUrl, authToken, supabaseKey, postgresTableName;
+    QList<SyncTableConfig> tables;
+    QReadWriteLock *dbLock = nullptr;
+
+    {
+        QMutexLocker lock(&m_mutex);
+        if (!m_initialized || m_tables.isEmpty()) {
+            emit syncStatusUpdated(100);
+            return;
+        }
+        dbPath            = m_databasePath;
+        serverUrl         = m_postgrestUrl;
+        authToken         = m_authToken;
+        supabaseKey       = m_supabaseKey;
+        postgresTableName = m_postgresTableName;
+        tables            = m_tables;
+        dbLock            = m_dbLock;
+    }
+
+    auto *thread = new QThread;
+    auto *worker = new SyncStatusWorker(dbPath, serverUrl, authToken, supabaseKey,
+                                        postgresTableName, tables, dbLock);
+    worker->moveToThread(thread);
+
+    connect(thread, &QThread::started,        worker, &SyncStatusWorker::run);
+    connect(worker, &SyncStatusWorker::done,  this,   &SqliteSyncPro::syncStatusUpdated,
+            Qt::QueuedConnection);
+    connect(worker, &SyncStatusWorker::done,  worker, &QObject::deleteLater);
+    connect(worker, &SyncStatusWorker::done,  thread, &QThread::quit);
+    connect(thread, &QThread::finished,       thread, &QObject::deleteLater);
+
+    thread->start();
+}
+
 bool SqliteSyncPro::syncAll()
 {
     QList<SyncTableConfig> tables;
@@ -873,3 +1008,5 @@ QString SqliteSyncPro::lastError() const
     QMutexLocker lock(&m_mutex);
     return m_lastError;
 }
+
+#include "sqlitesyncpro.moc"

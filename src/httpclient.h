@@ -46,9 +46,17 @@ public:
                      const QByteArray &body,
                      const QStringList &preferHeaders = {QStringLiteral("return=minimal")});
 
-    int     lastStatusCode() const { return m_lastStatusCode; }
-    QString lastError()      const { return m_lastError;      }
-    bool    wasSuccessful()  const { return m_lastStatusCode >= 200 && m_lastStatusCode < 300; }
+    /**
+     * Issue a HEAD request with "Prefer: count=exact" and parse the Content-Range
+     * response header to return the total server-side row count for the given
+     * endpoint/query.  Returns -1 on network error or if the header is absent.
+     */
+    int countRows(const QString &endpoint, const QUrlQuery &query = {});
+
+    int     lastStatusCode()    const { return m_lastStatusCode;    }
+    QString lastError()         const { return m_lastError;         }
+    QString lastContentRange()  const { return m_lastContentRange;  }
+    bool    wasSuccessful()     const { return m_lastStatusCode >= 200 && m_lastStatusCode < 300; }
 
 protected:
     void setLastStatusCode(int code)          { m_lastStatusCode = code; }
@@ -67,4 +75,5 @@ private:
     QString  m_apiKey;          // Supabase anon key; empty for self-hosted
     int      m_lastStatusCode = 0;
     QString  m_lastError;
+    QString  m_lastContentRange;
 };

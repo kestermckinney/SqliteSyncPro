@@ -55,16 +55,19 @@ QByteArray HttpClient::executeRequest(QNetworkRequest &request,
 {
     m_lastStatusCode = 0;
     m_lastError.clear();
+    m_lastContentRange.clear();
 
 
-    qDebug().noquote() << QStringLiteral("[HttpClient] --> %1 %2")
-                              .arg(QString::fromLatin1(verb), request.url().toString());
-    if (!body.isEmpty())
-        qDebug().noquote() << QStringLiteral("[HttpClient]     body (%1 bytes)").arg(body.size());
+    // qDebug().noquote() << QStringLiteral("[HttpClient] --> %1 %2")
+    //                           .arg(QString::fromLatin1(verb), request.url().toString());
+    // if (!body.isEmpty())
+    //     qDebug().noquote() << QStringLiteral("[HttpClient]     body (%1 bytes)").arg(body.size());
 
     QNetworkReply *reply = nullptr;
     if (verb == "GET") {
         reply = m_nam->get(request);
+    } else if (verb == "HEAD") {
+        reply = m_nam->head(request);
     } else if (verb == "POST") {
         reply = m_nam->post(request, body);
     } else if (verb == "PATCH") {
@@ -80,14 +83,15 @@ QByteArray HttpClient::executeRequest(QNetworkRequest &request,
 
     const QByteArray responseBody = reply->readAll();
     m_lastStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    m_lastContentRange = QString::fromLatin1(reply->rawHeader("Content-Range"));
 
-    qDebug().noquote() << QStringLiteral("[HttpClient] <-- %1 (%2 bytes) %3")
-                              .arg(m_lastStatusCode)
-                              .arg(responseBody.size())
-                              .arg(request.url().toString());
-    if (!responseBody.isEmpty())
-        qDebug().noquote() << QStringLiteral("[HttpClient]     response: %1")
-                                  .arg(QString::fromUtf8(responseBody.left(1000)));
+    // qDebug().noquote() << QStringLiteral("[HttpClient] <-- %1 (%2 bytes) %3")
+    //                           .arg(m_lastStatusCode)
+    //                           .arg(responseBody.size())
+    //                           .arg(request.url().toString());
+    // if (!responseBody.isEmpty())
+    //     qDebug().noquote() << QStringLiteral("[HttpClient]     response: %1")
+    //                               .arg(QString::fromUtf8(responseBody.left(1000)));
 
     if (reply->error() != QNetworkReply::NoError) {
         m_lastError = reply->errorString();
@@ -126,4 +130,20 @@ QByteArray HttpClient::patch(const QString &endpoint, const QUrlQuery &query,
     if (!preferHeaders.isEmpty())
         req.setRawHeader("Prefer", preferHeaders.join(QLatin1Char(',')).toUtf8());
     return executeRequest(req, "PATCH", body);
+}
+
+int HttpClient::countRows(const QString &endpoint, const QUrlQuery &query)
+{
+    auto req = buildRequest(endpoint, query);
+    req.setRawHeader("Prefer", "count=exact");
+    executeRequest(req, "HEAD", {});
+    if (!wasSuccessful())
+        return -1;
+    // Content-Range: 0-99/12345  or  */12345  (when 0 rows: */0)
+    const int slashPos = m_lastContentRange.lastIndexOf(QLatin1Char('/'));
+    if (slashPos < 0)
+        return -1;
+    bool ok = false;
+    const int count = m_lastContentRange.mid(slashPos + 1).toInt(&ok);
+    return ok ? count : -1;
 }

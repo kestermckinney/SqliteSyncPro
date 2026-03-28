@@ -4,6 +4,8 @@
 
 #include <QSqlDatabase>
 #include <QSqlError>
+#include <QSqlQuery>
+#include <QUrlQuery>
 #include <QUuid>
 #include <QDebug>
 
@@ -111,6 +113,49 @@ void SyncLoopWorker::run()
                                       .arg(combined.totalConflicts())
                                       .arg(combined.success ? QStringLiteral("true") : QStringLiteral("false"))
                                       .arg(combined.success ? QString() : QStringLiteral(", error: ") + combined.errorMessage);
+
+            // Query pending counts so we can log how much work remains.
+            // Local dirty count (syncdate IS NULL) → still needs push.
+            // Server count minus local count per table → still needs pull.
+            {
+                qint64 pendingPush = 0;
+                QList<qint64> localTotals;
+                localTotals.reserve(m_tables.size());
+
+                {
+                    QReadLocker lock(m_dbLock);
+                    for (const auto &cfg : m_tables) {
+                        QSqlQuery q(db);
+                        q.exec(QStringLiteral("SELECT COUNT(*) FROM \"%1\" WHERE syncdate IS NULL")
+                                   .arg(cfg.tableName));
+                        if (q.next())
+                            pendingPush += q.value(0).toLongLong();
+
+                        q.exec(QStringLiteral("SELECT COUNT(*) FROM \"%1\"").arg(cfg.tableName));
+                        localTotals << (q.next() ? q.value(0).toLongLong() : 0LL);
+                    }
+                }
+
+                qint64 pendingPull  = 0;
+                bool   pullUnknown = false;
+                for (int i = 0; i < m_tables.size(); ++i) {
+                    QUrlQuery query;
+                    query.addQueryItem(QStringLiteral("tablename"),
+                                       QStringLiteral("eq.%1").arg(m_tables[i].tableName));
+                    const int serverCount = http.countRows(m_postgresTableName, query);
+                    if (serverCount < 0) {
+                        pullUnknown = true;
+                    } else if (serverCount > localTotals[i]) {
+                        pendingPull += serverCount - localTotals[i];
+                    }
+                }
+
+                qDebug().noquote()
+                    << QStringLiteral("[SyncLoopWorker] Remaining: push=%1, pull=%2")
+                           .arg(pendingPush)
+                           .arg(pullUnknown ? QStringLiteral("unknown (server unreachable)")
+                                           : QString::number(pendingPull));
+            }
 
             emit syncCompleted(combined);
 
