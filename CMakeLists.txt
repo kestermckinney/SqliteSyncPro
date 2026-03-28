@@ -1,5 +1,19 @@
 cmake_minimum_required(VERSION 3.16)
 
+# Tell vcpkg to build dynamic libraries instead of static.
+# Must come before project() so the vcpkg toolchain file sees it.
+if(NOT VCPKG_TARGET_TRIPLET)
+    if(APPLE)
+        execute_process(COMMAND uname -m
+            OUTPUT_VARIABLE _host_arch OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(_host_arch MATCHES "arm64")
+            set(VCPKG_TARGET_TRIPLET "arm64-osx-dynamic" CACHE STRING "vcpkg target triplet")
+        else()
+            set(VCPKG_TARGET_TRIPLET "x64-osx-dynamic" CACHE STRING "vcpkg target triplet")
+        endif()
+    endif()
+endif()
+
 project(SqliteSyncPro VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
