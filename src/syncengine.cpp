@@ -178,6 +178,8 @@ SyncResult SyncEngine::synchronizeTable(const SyncTableConfig &config)
         if (m_dbLock) m_dbLock->lockForWrite();
         setLastPullTime(config.tableName, 0);
         if (m_dbLock) m_dbLock->unlock();
+        qDebug().noquote() << QStringLiteral("[SyncEngine] '%1': pushed %2 record(s); reset lastPullTime to 0 so next pull re-scans from the beginning")
+                                  .arg(config.tableName).arg(pushed);
     }
 
     result.tableResults.append(tableResult);
@@ -242,6 +244,9 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
         if (m_dbLock) m_dbLock->unlock();
     }
     // Write lock is now released; HTTP calls follow with no lock held.
+
+    qDebug().noquote() << QStringLiteral("[SyncEngine] Push '%1': %2 local record(s) pending (batchSize=%3)")
+                              .arg(config.tableName).arg(pending.size()).arg(config.batchSize);
 
     int pushed = 0;
 
@@ -395,6 +400,9 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
 
     const qint64 lastPull = getLastPullTime(config.tableName);
 
+    qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': lastPullTime=%2, batchSize=%3")
+                              .arg(config.tableName).arg(lastPull).arg(config.batchSize);
+
     // --- Step 1: HTTP GET with no lock held ---
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("tablename"),
@@ -434,6 +442,13 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
     const QJsonArray serverRows = doc.array();
     int    pulled      = 0;
     qint64 maxPullTime = lastPull;
+
+    qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': server returned %2 row(s)%3")
+                              .arg(config.tableName)
+                              .arg(serverRows.count())
+                              .arg(serverRows.count() == config.batchSize
+                                       ? QStringLiteral(" (batch limit hit — more may remain)")
+                                       : QString());
 
     // --- Step 2: upsert each record under a per-record write lock ---
     for (const QJsonValue &val : serverRows) {
@@ -499,8 +514,11 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
 
             if (serverTs <= localTs) {
                 if (m_dbLock) m_dbLock->unlock();
-                if (localTs > serverTs)
+                if (localTs > serverTs) {
                     ++tableResult.conflicts;
+                    qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': skipping id=%2 (local ts=%3 > server ts=%4)")
+                                              .arg(config.tableName, recordId).arg(localTs).arg(serverTs);
+                }
                 continue;
             }
 
@@ -586,6 +604,9 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
         setLastPullTime(config.tableName, maxPullTime);
         if (m_dbLock) m_dbLock->unlock();
     }
+
+    qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1' done: applied=%2, conflicts=%3, newPullTime=%4")
+                              .arg(config.tableName).arg(pulled).arg(tableResult.conflicts).arg(maxPullTime);
 
     return pulled;
 }

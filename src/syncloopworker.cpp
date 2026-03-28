@@ -76,12 +76,23 @@ void SyncLoopWorker::run()
         connect(&engine, &SyncEngine::progress,    this, &SyncLoopWorker::progress);
         connect(&engine, &SyncEngine::rowChanged,  this, &SyncLoopWorker::rowChanged);
 
+        qDebug().noquote() << QStringLiteral("[SyncLoopWorker] Starting sync loop for %1 table(s): %2")
+                                  .arg(m_tables.size())
+                                  .arg([this]() {
+                                      QStringList names;
+                                      for (const auto &t : m_tables)
+                                          names << t.tableName;
+                                      return names.join(QStringLiteral(", "));
+                                  }());
+
         while (true) {
             {
                 QMutexLocker locker(&m_stopMutex);
                 if (m_stopRequested)
                     break;
             }
+
+            qDebug().noquote() << QStringLiteral("[SyncLoopWorker] Sync cycle starting");
 
             SyncResult combined;
             for (const auto &cfg : m_tables) {
@@ -93,6 +104,14 @@ void SyncLoopWorker::run()
                     combined.errorMessage = tableSync.errorMessage;
                 }
             }
+
+            qDebug().noquote() << QStringLiteral("[SyncLoopWorker] Sync cycle complete: pulled=%1, pushed=%2, conflicts=%3, success=%4%5")
+                                      .arg(combined.totalPulled())
+                                      .arg(combined.totalPushed())
+                                      .arg(combined.totalConflicts())
+                                      .arg(combined.success ? QStringLiteral("true") : QStringLiteral("false"))
+                                      .arg(combined.success ? QString() : QStringLiteral(", error: ") + combined.errorMessage);
+
             emit syncCompleted(combined);
 
             // Stop the loop on decryption failures — the phrase is wrong and
