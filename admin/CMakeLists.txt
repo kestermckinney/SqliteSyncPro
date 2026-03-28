@@ -74,6 +74,50 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     )
+
+    get_target_property(_qmake_loc Qt6::qmake IMPORTED_LOCATION)
+    get_filename_component(_qt_bin "${_qmake_loc}" DIRECTORY)
+
+    # Step 1: Copy sqldrivers next to the executable for Qt Creator dev runs.
+    # Qt resolves plugins relative to the executable when the bundle hasn't been
+    # fully deployed, so Contents/MacOS/sqldrivers/ is needed for in-IDE runs.
+    add_custom_command(TARGET SQLSyncAdmin POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:SQLSyncAdmin>/sqldrivers"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${_qt_bin}/../plugins/sqldrivers"
+            "$<TARGET_FILE_DIR:SQLSyncAdmin>/sqldrivers"
+        COMMENT "Copying Qt SQL plugins next to executable"
+        VERBATIM
+    )
+
+    # Step 2: Deploy Qt frameworks and all standard plugins into the bundle.
+    # This populates Contents/Frameworks/ (Qt frameworks) and Contents/PlugIns/
+    # (platforms, imageformats, styles, tls, sqldrivers, …) for both Debug and
+    # Release so the app is self-contained and runnable outside Qt Creator.
+    add_custom_command(TARGET SQLSyncAdmin POST_BUILD
+        COMMAND "${_qt_bin}/macdeployqt"
+            "$<TARGET_BUNDLE_DIR:SQLSyncAdmin>"
+            -always-overwrite
+        COMMENT "Deploying Qt into app bundle (macdeployqt)"
+        VERBATIM
+    )
+
+    # Step 3: Copy vcpkg dylibs (libpq, libssl, libcrypto, …) into Contents/Frameworks/,
+    # fix install names and cross-references, and patch every libqsqlpsql.dylib in the
+    # bundle (both MacOS/sqldrivers/ and PlugIns/sqldrivers/ placed by macdeployqt).
+    add_custom_command(TARGET SQLSyncAdmin POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:SQLSyncAdmin>/../Frameworks"
+        COMMAND ${CMAKE_COMMAND}
+            "-DVCPKG_LIB=$<IF:$<CONFIG:Debug>,${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/debug/lib,${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/lib>"
+            "-DFRAMEWORKS=$<TARGET_FILE_DIR:SQLSyncAdmin>/../Frameworks"
+            "-DBUNDLE=$<TARGET_BUNDLE_DIR:SQLSyncAdmin>"
+            "-DEXECUTABLE=$<TARGET_FILE:SQLSyncAdmin>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/BundleMacLibs.cmake"
+        COMMENT "Bundling vcpkg dylibs into Contents/Frameworks and patching rpaths"
+        VERBATIM
+    )
 endif()
 
 target_link_libraries(SQLSyncAdmin
