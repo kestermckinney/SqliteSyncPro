@@ -258,10 +258,12 @@ public:
 
     /**
      * Asynchronously compute sync completeness and emit syncStatusUpdated(percent).
-     * percent == 100 means no NULL syncdates locally AND local count == server count
-     * for every table.  Must be called after initialize().
+     * percent == 100 means no NULL syncdates locally AND the pull is caught up.
+     * Pass the SyncResult from the most recent cycle so the worker can apply the
+     * same "pulled 0 with no network error → pull is done" rule used in the log.
+     * Must be called after initialize().
      */
-    void checkSyncStatus();
+    void checkSyncStatus(const SyncResult &lastResult);
 
 signals:
     void syncProgress(const QString &tableName, int processed, int total);

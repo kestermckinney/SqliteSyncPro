@@ -821,7 +821,8 @@ public:
                      const QString &supabaseKey,
                      const QString &postgresTableName,
                      const QList<SyncTableConfig> &tables,
-                     QReadWriteLock *dbLock)
+                     QReadWriteLock *dbLock,
+                     bool pullCaughtUp)
         : m_dbPath(dbPath)
         , m_serverUrl(serverUrl)
         , m_authToken(authToken)
@@ -829,6 +830,7 @@ public:
         , m_postgresTableName(postgresTableName)
         , m_tables(tables)
         , m_dbLock(dbLock)
+        , m_pullCaughtUp(pullCaughtUp)
     {}
 
 signals:
@@ -850,7 +852,7 @@ public slots:
         }
 
         qint64 totalLocal  = 0;
-        qint64 syncedLocal = 0;
+        qint64 pendingPush = 0;
 
         {
             QReadLocker lock(m_dbLock);
@@ -860,10 +862,10 @@ public slots:
                 if (q.next())
                     totalLocal += q.value(0).toLongLong();
 
-                q.exec(QStringLiteral("SELECT COUNT(*) FROM \"%1\" WHERE syncdate IS NOT NULL")
+                q.exec(QStringLiteral("SELECT COUNT(*) FROM \"%1\" WHERE syncdate IS NULL")
                            .arg(cfg.tableName));
                 if (q.next())
-                    syncedLocal += q.value(0).toLongLong();
+                    pendingPush += q.value(0).toLongLong();
             }
         }
 
@@ -871,7 +873,19 @@ public slots:
         db = QSqlDatabase();
         QSqlDatabase::removeDatabase(connName);
 
-        // Query server counts per table (HEAD + Prefer: count=exact)
+        // If the pull is caught up (last cycle pulled 0 with no network error) we
+        // only need to consider local dirty records.  Skip the server HEAD queries
+        // entirely — they can return a larger total than local for legitimate reasons
+        // (other clients, conflict-skipped records) and would cause a false < 100%.
+        if (m_pullCaughtUp) {
+            const int percent = (totalLocal == 0 || pendingPush == 0)
+                                    ? 100
+                                    : static_cast<int>((totalLocal - pendingPush) * 100 / totalLocal);
+            emit done(qBound(0, percent, 100));
+            return;
+        }
+
+        // Pull is still in progress — query server to compute how far along we are.
         HttpClient http;
         http.setBaseUrl(m_serverUrl);
         http.setAuthToken(m_authToken);
@@ -887,25 +901,25 @@ public slots:
                 totalServer += count;
         }
 
-        const qint64 grandTotal = qMax(totalLocal, totalServer);
+        const qint64 syncedLocal = totalLocal - pendingPush;
+        const qint64 grandTotal  = qMax(totalLocal, totalServer);
         int percent = (grandTotal == 0) ? 100
                                         : static_cast<int>(syncedLocal * 100 / grandTotal);
-        percent = qBound(0, percent, 100);
-
-        emit done(percent);
+        emit done(qBound(0, percent, 100));
     }
 
 private:
-    QString              m_dbPath;
-    QString              m_serverUrl;
-    QString              m_authToken;
-    QString              m_supabaseKey;
-    QString              m_postgresTableName;
+    QString                m_dbPath;
+    QString                m_serverUrl;
+    QString                m_authToken;
+    QString                m_supabaseKey;
+    QString                m_postgresTableName;
     QList<SyncTableConfig> m_tables;
-    QReadWriteLock      *m_dbLock;
+    QReadWriteLock        *m_dbLock;
+    bool                   m_pullCaughtUp;
 };
 
-void SqliteSyncPro::checkSyncStatus()
+void SqliteSyncPro::checkSyncStatus(const SyncResult &lastResult)
 {
     QString dbPath, serverUrl, authToken, supabaseKey, postgresTableName;
     QList<SyncTableConfig> tables;
@@ -926,9 +940,12 @@ void SqliteSyncPro::checkSyncStatus()
         dbLock            = m_dbLock;
     }
 
+    // Pull is "caught up" when the last cycle pulled nothing and had no network error.
+    const bool pullCaughtUp = (lastResult.totalPulled() == 0 && !lastResult.hasNetworkError());
+
     auto *thread = new QThread;
     auto *worker = new SyncStatusWorker(dbPath, serverUrl, authToken, supabaseKey,
-                                        postgresTableName, tables, dbLock);
+                                        postgresTableName, tables, dbLock, pullCaughtUp);
     worker->moveToThread(thread);
 
     connect(thread, &QThread::started,        worker, &SyncStatusWorker::run);
