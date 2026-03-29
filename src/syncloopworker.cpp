@@ -1,4 +1,5 @@
 #include "syncloopworker.h"
+#include "authmanager.h"
 #include "httpclient.h"
 #include "syncengine.h"
 
@@ -19,6 +20,9 @@ SyncLoopWorker::SyncLoopWorker(const QString               &dbPath,
                                 QReadWriteLock              *dbLock,
                                 const QByteArray            &encryptionKey,
                                 int                          syncIntervalMs,
+                                int                          syncHostType,
+                                const QString               &email,
+                                const QString               &password,
                                 QObject                     *parent)
     : QObject(parent)
     , m_dbPath(dbPath)
@@ -31,6 +35,9 @@ SyncLoopWorker::SyncLoopWorker(const QString               &dbPath,
     , m_dbLock(dbLock)
     , m_encryptionKey(encryptionKey)
     , m_syncIntervalMs(syncIntervalMs)
+    , m_syncHostType(syncHostType)
+    , m_email(email)
+    , m_password(password)
 {
 }
 
@@ -179,6 +186,43 @@ void SyncLoopWorker::run()
             // continuing would show the same warning dialog on every interval.
             if (combined.totalDecryptionFailures() > 0)
                 break;
+
+            // On 401, try to reauthenticate with the stored credentials.
+            // If reauth succeeds, update the token and retry immediately.
+            // If reauth fails, emit authenticationRequired and stop.
+            if (combined.hasAuthError()) {
+                qWarning().noquote() << QStringLiteral("[SyncLoopWorker] JWT expired; attempting reauthentication");
+
+                QString authEndpoint;
+                HttpClient authHttp;
+                authHttp.setApiKey(m_supabaseKey);
+
+                if (m_syncHostType == 1) {
+                    // Supabase: m_serverUrl is the /rest/v1 URL; derive the base URL for auth
+                    QString baseUrl = m_serverUrl;
+                    if (baseUrl.endsWith(QStringLiteral("/rest/v1")))
+                        baseUrl.chop(8);
+                    else if (baseUrl.endsWith(QStringLiteral("/rest/v1/")))
+                        baseUrl.chop(9);
+                    authEndpoint = baseUrl + QStringLiteral("/auth/v1/token?grant_type=password");
+                } else {
+                    // Self-hosted: relative endpoint on the same server
+                    authHttp.setBaseUrl(m_serverUrl);
+                    authEndpoint = QStringLiteral("rpc/rpc_login");
+                }
+
+                AuthManager auth;
+                if (auth.login(&authHttp, authEndpoint, m_email, m_password)) {
+                    m_authToken = auth.token();
+                    http.setAuthToken(m_authToken);
+                    qDebug().noquote() << QStringLiteral("[SyncLoopWorker] Reauthentication succeeded; resuming sync");
+                    continue;  // retry cycle immediately without sleeping
+                } else {
+                    qWarning().noquote() << QStringLiteral("[SyncLoopWorker] Reauthentication failed; stopping sync loop");
+                    emit authenticationRequired();
+                    break;
+                }
+            }
 
             // Back off when the server is unreachable so we don't flood the log
             // with repeated failures.  Use 5× the normal interval, capped at 5 minutes.

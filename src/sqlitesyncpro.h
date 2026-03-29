@@ -273,6 +273,14 @@ signals:
     void syncStopped();
 
     /**
+     * Emitted when the server returns HTTP 401 and reauthentication with the
+     * stored credentials fails.  The sync loop has stopped.  The calling
+     * application should prompt the user to verify their credentials via
+     * File > Cloud Sync Settings, then re-open the database to resume syncing.
+     */
+    void authenticationRequired();
+
+    /**
      * Emitted for each row inserted or updated in the local SQLite database
      * during a pull from the server.
      */
@@ -281,8 +289,10 @@ signals:
     /**
      * Emitted by checkSyncStatus() once the background status check completes.
      * percentComplete == 100 means fully synced; < 100 means sync still in progress.
+     * pendingPush = local rows with syncdate IS NULL (not yet pushed to server).
+     * pendingPull = estimated server rows not yet present locally (0 when caught up).
      */
-    void syncStatusUpdated(int percentComplete);
+    void syncStatusUpdated(int percentComplete, qint64 pendingPush, qint64 pendingPull);
 
 private:
     bool    doAuthenticate();

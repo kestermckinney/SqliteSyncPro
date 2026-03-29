@@ -271,6 +271,10 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
                 tableResult.networkError = true;
                 qWarning().noquote() << QStringLiteral("[SyncEngine] Network error pushing record %1 ('%2'): server unreachable (status 0)")
                                             .arg(recordId, config.tableName);
+            } else if (m_httpClient->lastStatusCode() == 401) {
+                tableResult.authError = true;
+                qWarning().noquote() << QStringLiteral("[SyncEngine] 401 Unauthorized pushing record %1 ('%2'): JWT may have expired")
+                                            .arg(recordId, config.tableName);
             } else {
                 qWarning().noquote() << QStringLiteral("[SyncEngine] Push check failed for record %1 ('%2'): HTTP %3 — %4")
                                             .arg(recordId, config.tableName)
@@ -420,6 +424,10 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
         if (m_httpClient->lastStatusCode() == 0) {
             tableResult.networkError = true;
             qWarning().noquote() << QStringLiteral("[SyncEngine] Network error pulling '%1': server unreachable (status 0)")
+                                        .arg(config.tableName);
+        } else if (m_httpClient->lastStatusCode() == 401) {
+            tableResult.authError = true;
+            qWarning().noquote() << QStringLiteral("[SyncEngine] 401 Unauthorized pulling '%1': JWT may have expired")
                                         .arg(config.tableName);
         } else {
             qWarning().noquote() << QStringLiteral("[SyncEngine] Pull failed for '%1': HTTP %2 — %3")

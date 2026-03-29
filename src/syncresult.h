@@ -11,6 +11,7 @@ struct TableSyncResult
     int     conflicts          = 0;   // server was newer; server record wins, resolved in pull phase
     int     decryptionFailures = 0;   // records skipped because decryption failed (wrong key)
     bool    networkError       = false; // true when HTTP status == 0 (server unreachable)
+    bool    authError          = false; // true when HTTP status == 401 (JWT expired)
     bool    success            = true;
     QString errorMessage;
 };
@@ -53,6 +54,13 @@ struct SyncResult
     {
         for (const auto &r : tableResults)
             if (r.networkError) return true;
+        return false;
+    }
+
+    bool hasAuthError() const
+    {
+        for (const auto &r : tableResults)
+            if (r.authError) return true;
         return false;
     }
 };

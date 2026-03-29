@@ -36,6 +36,9 @@ public:
                             QReadWriteLock              *dbLock,
                             const QByteArray            &encryptionKey = {},
                             int                          syncIntervalMs = 5000,
+                            int                          syncHostType   = 0,
+                            const QString               &email         = {},
+                            const QString               &password      = {},
                             QObject                     *parent        = nullptr);
 
 public slots:
@@ -51,6 +54,12 @@ signals:
     void syncCompleted(SyncResult result);
     void finished();
 
+    /**
+     * Emitted when the server returns HTTP 401 and reauthentication with
+     * the stored credentials also fails.  The sync loop has stopped.
+     */
+    void authenticationRequired();
+
 private:
     QString                m_dbPath;
     QString                m_serverUrl;
@@ -62,6 +71,9 @@ private:
     QReadWriteLock        *m_dbLock;
     QByteArray             m_encryptionKey;
     int                    m_syncIntervalMs;
+    int                    m_syncHostType;
+    QString                m_email;
+    QString                m_password;
 
     QMutex         m_stopMutex;
     QWaitCondition m_stopCondition;

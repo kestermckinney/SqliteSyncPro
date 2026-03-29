@@ -503,9 +503,10 @@ bool SqliteSyncPro::initialize()
 
     // Snapshot config for the loop worker.
     QString serverUrl, authToken, supabaseKey, userId, postgresTableName;
+    QString email, password;
     QByteArray encryptionKey;
     QList<SyncTableConfig> tables;
-    int syncIntervalMs;
+    int syncIntervalMs, syncHostType;
     {
         QMutexLocker lock(&m_mutex);
         serverUrl         = m_postgrestUrl;
@@ -516,13 +517,17 @@ bool SqliteSyncPro::initialize()
         encryptionKey     = m_encryptionKey;
         tables            = m_tables;
         syncIntervalMs    = m_syncIntervalMs;
+        syncHostType      = m_syncHostType;
+        email             = m_email;
+        password          = m_password;
     }
 
     // Start the background loop thread (no parent — destructor deletes it explicitly).
     m_syncThread = new QThread;
     m_syncWorker = new SyncLoopWorker(dbPath, serverUrl, authToken, supabaseKey,
                                       userId, postgresTableName, tables,
-                                      m_dbLock, encryptionKey, syncIntervalMs);
+                                      m_dbLock, encryptionKey, syncIntervalMs,
+                                      syncHostType, email, password);
     m_syncWorker->moveToThread(m_syncThread);
 
     connect(m_syncThread, &QThread::started,         m_syncWorker, &SyncLoopWorker::run);
@@ -532,6 +537,8 @@ bool SqliteSyncPro::initialize()
             this,          &SqliteSyncPro::syncCompleted);
     connect(m_syncWorker, &SyncLoopWorker::rowChanged,
             this,          &SqliteSyncPro::rowChanged);
+    connect(m_syncWorker, &SyncLoopWorker::authenticationRequired,
+            this,          &SqliteSyncPro::authenticationRequired);
 
     connect(m_syncWorker, &SyncLoopWorker::finished, this, [this]() {
         // Worker has exited its loop; quit the thread so QThread::finished fires.
@@ -834,7 +841,7 @@ public:
     {}
 
 signals:
-    void done(int percentComplete);
+    void done(int percentComplete, qint64 pendingPush, qint64 pendingPull);
 
 public slots:
     void run()
@@ -847,7 +854,7 @@ public slots:
         if (!db.open()) {
             db = QSqlDatabase();
             QSqlDatabase::removeDatabase(connName);
-            emit done(0);
+            emit done(0, 0, 0);
             return;
         }
 
@@ -881,7 +888,7 @@ public slots:
             const int percent = (totalLocal == 0 || pendingPush == 0)
                                     ? 100
                                     : static_cast<int>((totalLocal - pendingPush) * 100 / totalLocal);
-            emit done(qBound(0, percent, 100));
+            emit done(qBound(0, percent, 100), pendingPush, 0LL);
             return;
         }
 
@@ -903,9 +910,10 @@ public slots:
 
         const qint64 syncedLocal = totalLocal - pendingPush;
         const qint64 grandTotal  = qMax(totalLocal, totalServer);
+        const qint64 pendingPull = qMax(0LL, totalServer - totalLocal);
         int percent = (grandTotal == 0) ? 100
                                         : static_cast<int>(syncedLocal * 100 / grandTotal);
-        emit done(qBound(0, percent, 100));
+        emit done(qBound(0, percent, 100), pendingPush, pendingPull);
     }
 
 private:
@@ -928,7 +936,7 @@ void SqliteSyncPro::checkSyncStatus(const SyncResult &lastResult)
     {
         QMutexLocker lock(&m_mutex);
         if (!m_initialized || m_tables.isEmpty()) {
-            emit syncStatusUpdated(100);
+            emit syncStatusUpdated(100, 0LL, 0LL);
             return;
         }
         dbPath            = m_databasePath;
@@ -948,11 +956,13 @@ void SqliteSyncPro::checkSyncStatus(const SyncResult &lastResult)
                                         postgresTableName, tables, dbLock, pullCaughtUp);
     worker->moveToThread(thread);
 
-    connect(thread, &QThread::started,        worker, &SyncStatusWorker::run);
-    connect(worker, &SyncStatusWorker::done,  this,   &SqliteSyncPro::syncStatusUpdated,
+    connect(thread, &QThread::started,       worker, &SyncStatusWorker::run);
+    connect(worker, &SyncStatusWorker::done, this,   &SqliteSyncPro::syncStatusUpdated,
             Qt::QueuedConnection);
-    connect(worker, &SyncStatusWorker::done,  worker, &QObject::deleteLater);
-    connect(worker, &SyncStatusWorker::done,  thread, &QThread::quit);
+    connect(worker, &SyncStatusWorker::done, worker,
+            [worker](int, qint64, qint64){ worker->deleteLater(); });
+    connect(worker, &SyncStatusWorker::done, thread,
+            [thread](int, qint64, qint64){ thread->quit(); });
     connect(thread, &QThread::finished,       thread, &QObject::deleteLater);
 
     thread->start();
