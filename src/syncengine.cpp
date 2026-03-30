@@ -269,17 +269,23 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
                     .arg(recordId, m_httpClient->lastError());
             if (m_httpClient->lastStatusCode() == 0) {
                 tableResult.networkError = true;
+#ifdef QT_DEBUG
                 qWarning().noquote() << QStringLiteral("[SyncEngine] Network error pushing record %1 ('%2'): server unreachable (status 0)")
                                             .arg(recordId, config.tableName);
+#endif
             } else if (m_httpClient->lastStatusCode() == 401) {
                 tableResult.authError = true;
+#ifdef QT_DEBUG
                 qWarning().noquote() << QStringLiteral("[SyncEngine] 401 Unauthorized pushing record %1 ('%2'): JWT may have expired")
                                             .arg(recordId, config.tableName);
+#endif
             } else {
+#ifdef QT_DEBUG
                 qWarning().noquote() << QStringLiteral("[SyncEngine] Push check failed for record %1 ('%2'): HTTP %3 — %4")
                                             .arg(recordId, config.tableName)
                                             .arg(m_httpClient->lastStatusCode())
                                             .arg(m_httpClient->lastError());
+#endif
             }
             return -1;
         }
@@ -294,7 +300,9 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
             const QByteArray plain = QJsonDocument(rowJson).toJson(QJsonDocument::Compact);
             const QString enc = RowEncryption::encrypt(plain, m_encryptionKey);
             if (enc.isEmpty()) {
+#ifdef QT_DEBUG
                 qWarning() << "Encryption failed for record" << recordId << "– skipping";
+#endif
                 continue;
             }
             jsonRowDataValue = enc;
@@ -316,8 +324,10 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
                                QJsonDocument(payload).toJson(QJsonDocument::Compact),
                                {QStringLiteral("return=minimal")});
             uploadOk = m_httpClient->wasSuccessful();
+#ifdef QT_DEBUG
             if (!uploadOk)
                 qWarning() << "POST failed for" << recordId << m_httpClient->lastError();
+#endif
 
         } else {
             const qint64 serverTs = checkArr.first().toObject()
@@ -339,8 +349,10 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
                 m_httpClient->patch(m_postgresTableName, patchQuery,
                                     QJsonDocument(payload).toJson(QJsonDocument::Compact));
                 uploadOk = m_httpClient->wasSuccessful();
+#ifdef QT_DEBUG
                 if (!uploadOk)
                     qWarning() << "PATCH failed for" << recordId << m_httpClient->lastError();
+#endif
 
             } else if (serverTs > localTs) {
                 // Server is newer → conflict; server wins; resolved in pull phase
@@ -368,8 +380,10 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
                 emit progress(config.tableName, pushed, -1);
             } else {
                 if (m_dbLock) m_dbLock->unlock();
+#ifdef QT_DEBUG
                 qWarning() << "Failed to stamp SYNCDATE for" << recordId
                            << stampQ.lastError().text();
+#endif
             }
         }
     }
@@ -423,17 +437,23 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                                        .arg(m_httpClient->lastError());
         if (m_httpClient->lastStatusCode() == 0) {
             tableResult.networkError = true;
+#ifdef QT_DEBUG
             qWarning().noquote() << QStringLiteral("[SyncEngine] Network error pulling '%1': server unreachable (status 0)")
                                         .arg(config.tableName);
+#endif
         } else if (m_httpClient->lastStatusCode() == 401) {
             tableResult.authError = true;
+#ifdef QT_DEBUG
             qWarning().noquote() << QStringLiteral("[SyncEngine] 401 Unauthorized pulling '%1': JWT may have expired")
                                         .arg(config.tableName);
+#endif
         } else {
+#ifdef QT_DEBUG
             qWarning().noquote() << QStringLiteral("[SyncEngine] Pull failed for '%1': HTTP %2 — %3")
                                         .arg(config.tableName)
                                         .arg(m_httpClient->lastStatusCode())
                                         .arg(m_httpClient->lastError());
+#endif
         }
         return -1;
     }
@@ -495,7 +515,9 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
             if (!m_encryptionKey.isEmpty()) {
                 const QByteArray plain = RowEncryption::decrypt(encoded, m_encryptionKey);
                 if (plain.isEmpty()) {
+#ifdef QT_DEBUG
                     qWarning() << "Pull: decryption failed for ID" << recordId;
+#endif
                     ++tableResult.decryptionFailures;
                     continue;
                 }
@@ -503,7 +525,9 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                 if (rowDoc.isObject())
                     rowData = rowDoc.object();
             } else {
+#ifdef QT_DEBUG
                 qWarning() << "Pull: received encrypted JSONROWDATA but no key set for ID" << recordId;
+#endif
                 ++tableResult.decryptionFailures;
                 continue;
             }
@@ -512,7 +536,9 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
         }
 
         if (rowData.isEmpty()) {
+#ifdef QT_DEBUG
             qWarning() << "Pull: empty JSONROWDATA for ID" << recordId;
+#endif
             continue;
         }
 
@@ -530,8 +556,10 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
 
         if (!existQ.exec()) {
             if (m_dbLock) m_dbLock->unlock();
+#ifdef QT_DEBUG
             qWarning() << "Existence check failed for" << recordId
                        << existQ.lastError().text();
+#endif
             continue;
         }
 
@@ -578,8 +606,10 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                 emit rowChanged(config.tableName, recordId);
             } else {
                 if (m_dbLock) m_dbLock->unlock();
+#ifdef QT_DEBUG
                 qWarning() << "UPDATE failed for" << recordId
                            << updateQ.lastError().text();
+#endif
             }
 
         } else {
@@ -619,8 +649,10 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                 emit rowChanged(config.tableName, recordId);
             } else {
                 if (m_dbLock) m_dbLock->unlock();
+#ifdef QT_DEBUG
                 qWarning() << "INSERT failed for" << recordId
                            << insertQ.lastError().text();
+#endif
             }
         }
     }

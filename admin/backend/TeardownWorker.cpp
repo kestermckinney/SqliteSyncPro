@@ -16,7 +16,9 @@ bool TeardownWorker::execStep(int &counter, const QString &name, const QString &
     const bool ok = q.exec(sql);
     const QString detail = ok ? QString() : q.lastError().text();
     if (!ok)
+#ifdef QT_DEBUG
         qWarning().noquote() << "[TeardownWorker] FAILED:" << name << "-" << detail;
+#endif
     emit stepCompleted(counter++, ok, name, detail);
     return ok;
 }
@@ -40,7 +42,9 @@ void TeardownWorker::runTeardown(const QString &host,
 
     if (!m_db.open()) {
         const QString err = m_db.lastError().text();
+#ifdef QT_DEBUG
         qWarning() << "[TeardownWorker] Cannot open database:" << err;
+#endif
         m_db = QSqlDatabase();
         QSqlDatabase::removeDatabase(m_connName);
         emit finished(false, QStringLiteral("Cannot connect to database: %1").arg(err));
@@ -126,8 +130,10 @@ void TeardownWorker::runTeardown(const QString &host,
             }
 
             if (!ok) {
+#ifdef QT_DEBUG
                 qWarning().noquote() << "[TeardownWorker] FAILED: Drop role:"
                                      << role << "-" << err;
+#endif
                 anyFailed = true;
             }
             emit stepCompleted(s++, ok,
@@ -139,7 +145,9 @@ void TeardownWorker::runTeardown(const QString &host,
     m_db = QSqlDatabase();
     QSqlDatabase::removeDatabase(m_connName);
 
+#ifdef QT_DEBUG
     qDebug() << "[TeardownWorker] finished anyFailed=" << anyFailed;
+#endif
     emit finished(!anyFailed,
                   anyFailed ? QStringLiteral("One or more steps failed — see log for details.")
                             : QString());

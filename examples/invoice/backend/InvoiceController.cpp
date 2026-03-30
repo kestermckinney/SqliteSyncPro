@@ -29,7 +29,9 @@ static void createInvoiceSchema(const QString &dbPath)
     QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connName);
     db.setDatabaseName(dbPath);
     if (!db.open()) {
+#ifdef QT_DEBUG
         qWarning() << "createInvoiceSchema: cannot open" << dbPath;
+#endif
         db = QSqlDatabase();
         QSqlDatabase::removeDatabase(connName);
         return;
@@ -175,7 +177,9 @@ static void mutateDatabaseThread(const QString                            &dbPat
     QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connName);
     db.setDatabaseName(dbPath);
     if (!db.open()) {
+#ifdef QT_DEBUG
         qWarning() << connName << "mutator: cannot open DB:" << db.lastError().text();
+#endif
         db = QSqlDatabase();
         QSqlDatabase::removeDatabase(connName);
         return;
@@ -270,9 +274,11 @@ static void mutateDatabaseThread(const QString                            &dbPat
     db.close();
     db = QSqlDatabase();
     QSqlDatabase::removeDatabase(connName);
+#ifdef QT_DEBUG
     qDebug().noquote()
         << QStringLiteral("[mutator] %1 exited — total mutations: %2")
                .arg(connBaseName).arg(counter->load());
+#endif
 }
 
 // ---------------------------------------------------------------------------

@@ -18,8 +18,10 @@ QList<ColumnInfo> SchemaInspector::getColumns(const QString &tableName)
     // PRAGMA table_info does not support bound parameters; tableName is developer-supplied.
     QSqlQuery q(m_db);
     if (!q.exec(QStringLiteral("PRAGMA table_info(\"%1\")").arg(tableName))) {
+#ifdef QT_DEBUG
         qWarning() << "SchemaInspector::getColumns failed for" << tableName
                    << "-" << q.lastError().text();
+#endif
         return columns;
     }
 

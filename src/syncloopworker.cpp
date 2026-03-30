@@ -85,6 +85,7 @@ void SyncLoopWorker::run()
         connect(&engine, &SyncEngine::progress,    this, &SyncLoopWorker::progress);
         connect(&engine, &SyncEngine::rowChanged,  this, &SyncLoopWorker::rowChanged);
 
+#ifdef QT_DEBUG
         qDebug().noquote() << QStringLiteral("[SyncLoopWorker] Starting sync loop for %1 table(s): %2")
                                   .arg(m_tables.size())
                                   .arg([this]() {
@@ -93,6 +94,7 @@ void SyncLoopWorker::run()
                                           names << t.tableName;
                                       return names.join(QStringLiteral(", "));
                                   }());
+#endif
 
         while (true) {
             {
@@ -101,7 +103,9 @@ void SyncLoopWorker::run()
                     break;
             }
 
+#ifdef QT_DEBUG
             qDebug().noquote() << QStringLiteral("[SyncLoopWorker] Sync cycle starting");
+#endif
 
             SyncResult combined;
             for (const auto &cfg : m_tables) {
@@ -114,12 +118,14 @@ void SyncLoopWorker::run()
                 }
             }
 
+#ifdef QT_DEBUG
             qDebug().noquote() << QStringLiteral("[SyncLoopWorker] Sync cycle complete: pulled=%1, pushed=%2, conflicts=%3, success=%4%5")
                                       .arg(combined.totalPulled())
                                       .arg(combined.totalPushed())
                                       .arg(combined.totalConflicts())
                                       .arg(combined.success ? QStringLiteral("true") : QStringLiteral("false"))
                                       .arg(combined.success ? QString() : QStringLiteral(", error: ") + combined.errorMessage);
+#endif
 
             // Query pending counts so we can log how much work remains.
             // Local dirty count (syncdate IS NULL) → still needs push.
@@ -173,11 +179,13 @@ void SyncLoopWorker::run()
                 // else: pulled 0 with no network error — lastPullTime has advanced past all
                 // available server records (or everything was conflict-skipped); pendingPull = 0.
 
+#ifdef QT_DEBUG
                 qDebug().noquote()
                     << QStringLiteral("[SyncLoopWorker] Remaining: push=%1, pull=%2")
                            .arg(pendingPush)
                            .arg(pullUnknown ? QStringLiteral("unknown (server unreachable)")
                                            : QString::number(pendingPull));
+#endif
             }
 
             emit syncCompleted(combined);
@@ -191,7 +199,9 @@ void SyncLoopWorker::run()
             // If reauth succeeds, update the token and retry immediately.
             // If reauth fails, emit authenticationRequired and stop.
             if (combined.hasAuthError()) {
+#ifdef QT_DEBUG
                 qWarning().noquote() << QStringLiteral("[SyncLoopWorker] JWT expired; attempting reauthentication");
+#endif
 
                 QString authEndpoint;
                 HttpClient authHttp;
@@ -215,10 +225,14 @@ void SyncLoopWorker::run()
                 if (auth.login(&authHttp, authEndpoint, m_email, m_password)) {
                     m_authToken = auth.token();
                     http.setAuthToken(m_authToken);
+#ifdef QT_DEBUG
                     qDebug().noquote() << QStringLiteral("[SyncLoopWorker] Reauthentication succeeded; resuming sync");
+#endif
                     continue;  // retry cycle immediately without sleeping
                 } else {
+#ifdef QT_DEBUG
                     qWarning().noquote() << QStringLiteral("[SyncLoopWorker] Reauthentication failed; stopping sync loop");
+#endif
                     emit authenticationRequired();
                     break;
                 }
@@ -229,9 +243,11 @@ void SyncLoopWorker::run()
             int waitMs = m_syncIntervalMs;
             if (combined.hasNetworkError()) {
                 waitMs = qMin(m_syncIntervalMs * 5, 300000);
+#ifdef QT_DEBUG
                 qWarning().noquote()
                     << QStringLiteral("[SyncLoopWorker] Network unreachable; backing off %1 ms before retry")
                            .arg(waitMs);
+#endif
             }
 
             // Sleep for the interval, waking early if stop is requested.
