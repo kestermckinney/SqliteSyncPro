@@ -243,6 +243,9 @@ void SyncLoopWorker::run()
             int waitMs = m_syncIntervalMs;
             if (combined.hasNetworkError()) {
                 waitMs = qMin(m_syncIntervalMs * 5, 300000);
+                // Drop stale connections so the next cycle opens fresh ones after
+                // the network comes back rather than reusing dead HTTP/2 streams.
+                http.clearConnections();
 #ifdef QT_DEBUG
                 qWarning().noquote()
                     << QStringLiteral("[SyncLoopWorker] Network unreachable; backing off %1 ms before retry")
@@ -267,5 +270,13 @@ void SyncLoopWorker::requestStop()
 {
     QMutexLocker locker(&m_stopMutex);
     m_stopRequested = true;
+    m_stopCondition.wakeAll();
+}
+
+void SyncLoopWorker::retryNow()
+{
+    // Wake the backoff sleep without setting m_stopRequested so the loop
+    // immediately starts a new sync cycle instead of waiting out the full interval.
+    QMutexLocker locker(&m_stopMutex);
     m_stopCondition.wakeAll();
 }

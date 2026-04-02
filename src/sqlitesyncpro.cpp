@@ -686,6 +686,13 @@ void SqliteSyncPro::shutdown()
     // The syncStopped signal is emitted asynchronously when the thread exits.
 }
 
+void SqliteSyncPro::retryNow()
+{
+    // Invoke on the worker's thread so the mutex-protected wakeAll() is safe.
+    if (m_syncWorker)
+        QMetaObject::invokeMethod(m_syncWorker, "retryNow", Qt::QueuedConnection);
+}
+
 // ---------------------------------------------------------------------------
 // Manual synchronization helpers
 // ---------------------------------------------------------------------------

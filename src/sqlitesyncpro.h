@@ -175,6 +175,14 @@ public:
      */
     void shutdown();
 
+    /**
+     * Wake the background sync loop from its inter-cycle sleep so it starts
+     * a new sync cycle immediately.  Has no effect if the loop is not sleeping
+     * (e.g. a cycle is already in progress) or if the loop has stopped.
+     * Call this when network connectivity is restored after an outage.
+     */
+    void retryNow();
+
     // ------------------------------------------------------------------
     // Backwards-compatible helpers (kept for existing code and tests)
     // ------------------------------------------------------------------

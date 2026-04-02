@@ -20,12 +20,24 @@ void HttpClient::setBaseUrl(const QString &url)
 
 void HttpClient::setAuthToken(const QString &token)
 {
-    m_authToken = token;
+    if (m_authToken != token) {
+        m_authToken = token;
+        // Clear the connection cache so the next request opens a fresh connection.
+        // The old HTTP/2 connection is stale after a token refresh — the server
+        // rejects new streams on it with "Host requires authentication" even when
+        // the Authorization header carries the correct new token.
+        m_nam->clearConnectionCache();
+    }
 }
 
 void HttpClient::setApiKey(const QString &key)
 {
     m_apiKey = key;
+}
+
+void HttpClient::clearConnections()
+{
+    m_nam->clearConnectionCache();
 }
 
 QNetworkRequest HttpClient::buildRequest(const QString &endpoint, const QUrlQuery &query) const

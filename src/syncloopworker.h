@@ -48,6 +48,13 @@ public slots:
     /** Signal the loop to stop and wake the sleep so it exits promptly. */
     void requestStop();
 
+    /**
+     * Wake the backoff sleep early so the next sync cycle starts immediately.
+     * Unlike requestStop(), this does not set the stop flag — the loop keeps running.
+     * Call this when network connectivity is restored after a failure.
+     */
+    void retryNow();
+
 signals:
     void progress(const QString &tableName, int processed, int total);
     void rowChanged(const QString &tableName, const QString &id);

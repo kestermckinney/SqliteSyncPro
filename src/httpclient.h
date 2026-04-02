@@ -34,6 +34,13 @@ public:
      */
     void setApiKey(const QString &key);
 
+    /**
+     * Drop all cached HTTP connections.  Call this after a network error or
+     * reconnect so the next request opens a fresh connection rather than
+     * trying to reuse a stale one that the server has already closed.
+     */
+    void clearConnections();
+
     QString baseUrl()    const { return m_baseUrl;    }
     QString authToken()  const { return m_authToken;  }
     QString apiKey()     const { return m_apiKey;     }
