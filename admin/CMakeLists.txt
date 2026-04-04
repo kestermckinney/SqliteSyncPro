@@ -32,6 +32,8 @@ elseif(APPLE)
         set_source_files_properties("${ICNS_FILE}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
         list(APPEND PLATFORM_SOURCES "${ICNS_FILE}")
     endif()
+    set(MACOSX_BUNDLE_ICON_FILE sqlsyncadmin.icns)
+    set(APP_ICON_MACOS "${CMAKE_CURRENT_SOURCE_DIR}/icons/sqlsyncadmin.icns")
 endif()
 
 # ── Executable ────────────────────────────────────────────────────────────────

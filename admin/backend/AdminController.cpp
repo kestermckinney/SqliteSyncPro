@@ -26,9 +26,9 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
-// QSettings keys — same org/app as SQLSync Administrator
-#define SETTINGS_ORG   "ProjectNotes"
-#define SETTINGS_APP   "AppSettings"
+// QSettings group for AdminController credentials.
+// The org and app name come from QCoreApplication so that --developer-profile
+// in main() routes settings to the same profile-specific file as ProjectNotes.
 #define SETTINGS_GROUP "sync_api"
 
 // ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@ AdminController::~AdminController()
 
 void AdminController::loadConnectionSettings()
 {
-    QSettings s(QStringLiteral(SETTINGS_ORG), QStringLiteral(SETTINGS_APP));
+    QSettings s(QCoreApplication::organizationName(), QStringLiteral("AppSettings"));
     s.beginGroup(QStringLiteral(SETTINGS_GROUP));
     setHost      (s.value(QStringLiteral("host"),       m_host).toString());
     setPort      (s.value(QStringLiteral("port"),       m_port).toInt());
@@ -170,7 +170,7 @@ void AdminController::saveConnectionSettings()
              << "user=" << m_superuser
              << "serverMode=" << static_cast<int>(m_serverMode);
 #endif
-    QSettings s(QStringLiteral(SETTINGS_ORG), QStringLiteral(SETTINGS_APP));
+    QSettings s(QCoreApplication::organizationName(), QStringLiteral("AppSettings"));
     s.beginGroup(QStringLiteral(SETTINGS_GROUP));
     s.setValue(QStringLiteral("host"),                    m_host);
     s.setValue(QStringLiteral("port"),                    m_port);
