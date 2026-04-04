@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Paul McKinney
 #include "MainWindow.h"
 #include "InvoiceSettingsDialog.h"
 #include "backend/InvoiceController.h"

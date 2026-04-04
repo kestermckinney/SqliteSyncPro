@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Paul McKinney
 #include "UsersPage.h"
 #include "../../backend/AdminController.h"
 

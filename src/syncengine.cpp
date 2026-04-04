@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Paul McKinney
 #include "syncengine.h"
 #include "httpclient.h"
 #include "rowencryption.h"

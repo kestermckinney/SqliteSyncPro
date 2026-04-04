@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Paul McKinney
 #include "syncapisettingsdialog.h"
 #include "sqlitesyncpro.h"
 #include "ui_syncapisettingsdialog.h"

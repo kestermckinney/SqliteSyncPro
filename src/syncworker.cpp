@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Paul McKinney
 #include "syncworker.h"
 #include "httpclient.h"
 #include "syncengine.h"

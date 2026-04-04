@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Paul McKinney
 #include "InstallPage.h"
 #include "../../backend/AdminController.h"
 

@@ -1,3 +1,4 @@
+# Copyright (C) 2026 Paul McKinney
 # BundleMacLibs.cmake
 # Post-build script that bundles vcpkg dynamic libraries into a macOS app bundle.
 #

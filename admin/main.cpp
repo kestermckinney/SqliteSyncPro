@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Paul McKinney
 #include <QApplication>
 #include <QIcon>
 #include "ui/MainWindow.h"
@@ -11,7 +12,7 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
 
     app.setApplicationName(QStringLiteral("SQLSync Administrator"));
-    app.setOrganizationName(QStringLiteral("SqliteSyncPro"));
+    app.setOrganizationName(QStringLiteral("com.kestermckinney"));
 
     // Build a multi-resolution icon so Qt picks the sharpest size at every
     // DPI (title bar, taskbar, Alt+Tab, high-DPI screens).

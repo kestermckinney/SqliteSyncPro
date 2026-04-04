@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Paul McKinney
 #include "syncloopworker.h"
 #include "authmanager.h"
 #include "httpclient.h"
