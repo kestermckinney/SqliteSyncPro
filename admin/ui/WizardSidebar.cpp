@@ -53,7 +53,7 @@ void WizardSidebar::paintEvent(QPaintEvent *)
     p.setPen(Qt::white);
     p.drawText(QRect(20, 20, width() - 20, kHeaderHeight - 20),
                Qt::AlignTop | Qt::TextWordWrap,
-               QStringLiteral("SQLSync\nAdministrator"));
+               QStringLiteral("Project Notes\nRemote Host"));
 
     for (int i = 0; i < kStepTitles.size(); ++i) {
         const QRect sr       = stepRect(i);
@@ -158,7 +158,7 @@ void WizardSidebar::paintEvent(QPaintEvent *)
     p.setPen(QColor(255, 255, 255, 77));
     p.drawText(QRect(0, height() - 28, width(), 20),
                Qt::AlignCenter,
-               QStringLiteral("v0.1.0"));
+               QStringLiteral("v5.0.0"));
 }
 
 void WizardSidebar::mousePressEvent(QMouseEvent *event)

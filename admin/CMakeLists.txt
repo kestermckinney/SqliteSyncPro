@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(SQLSyncAdmin VERSION 0.1.0 LANGUAGES CXX)
+project(ProjectNotesRemoteHost VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,18 +27,17 @@ if(WIN32)
     list(APPEND PLATFORM_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/sqlsyncadmin.rc")
 elseif(APPLE)
     # Bundle the .icns for macOS (generate it from the PNGs with iconutil on a Mac).
+    # See the note at the bottom of this file for the iconutil command.
     set(ICNS_FILE "${CMAKE_CURRENT_SOURCE_DIR}/icons/sqlsyncadmin.icns")
-    if(EXISTS "${ICNS_FILE}")
-        set_source_files_properties("${ICNS_FILE}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
-        list(APPEND PLATFORM_SOURCES "${ICNS_FILE}")
-    endif()
+    set_source_files_properties("${ICNS_FILE}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    list(APPEND PLATFORM_SOURCES "${ICNS_FILE}")
     set(MACOSX_BUNDLE_ICON_FILE sqlsyncadmin.icns)
     set(APP_ICON_MACOS "${CMAKE_CURRENT_SOURCE_DIR}/icons/sqlsyncadmin.icns")
 endif()
 
 # ── Executable ────────────────────────────────────────────────────────────────
 
-qt_add_executable(SQLSyncAdmin WIN32
+qt_add_executable(ProjectNotesRemoteHost WIN32
     main.cpp
     backend/ServerMode.h
     backend/AdminController.h
@@ -67,12 +66,14 @@ qt_add_executable(SQLSyncAdmin WIN32
     ${PLATFORM_SOURCES}
 )
 
+set_target_properties(ProjectNotesRemoteHost PROPERTIES OUTPUT_NAME "Project Notes Remote Host")
+
 if(APPLE)
-    set_target_properties(SQLSyncAdmin PROPERTIES
+    set_target_properties(ProjectNotesRemoteHost PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_ICON_FILE sqlsyncadmin
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.sqlitesyncpro.sqladmin"
-        MACOSX_BUNDLE_BUNDLE_NAME "SQLSync Administrator"
+        MACOSX_BUNDLE_BUNDLE_NAME "Project Notes Remote Host"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     )
@@ -80,15 +81,28 @@ if(APPLE)
     get_target_property(_qmake_loc Qt6::qmake IMPORTED_LOCATION)
     get_filename_component(_qt_bin "${_qmake_loc}" DIRECTORY)
 
-    # Step 1: Copy sqldrivers next to the executable for Qt Creator dev runs.
+    # Step 1: Copy the app icon into Contents/Resources/.
+    # set_source_files_properties is not reliably honoured by qt_add_executable,
+    # so we use an explicit POST_BUILD copy instead.
+    add_custom_command(TARGET ProjectNotesRemoteHost POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_BUNDLE_DIR:ProjectNotesRemoteHost>/Contents/Resources"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ICNS_FILE}"
+            "$<TARGET_BUNDLE_DIR:ProjectNotesRemoteHost>/Contents/Resources/sqlsyncadmin.icns"
+        COMMENT "Copying app icon into bundle Resources"
+        VERBATIM
+    )
+
+    # Step 2: Copy sqldrivers next to the executable for Qt Creator dev runs.
     # Qt resolves plugins relative to the executable when the bundle hasn't been
     # fully deployed, so Contents/MacOS/sqldrivers/ is needed for in-IDE runs.
-    add_custom_command(TARGET SQLSyncAdmin POST_BUILD
+    add_custom_command(TARGET ProjectNotesRemoteHost POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
-            "$<TARGET_FILE_DIR:SQLSyncAdmin>/sqldrivers"
+            "$<TARGET_FILE_DIR:ProjectNotesRemoteHost>/sqldrivers"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${_qt_bin}/../plugins/sqldrivers"
-            "$<TARGET_FILE_DIR:SQLSyncAdmin>/sqldrivers"
+            "$<TARGET_FILE_DIR:ProjectNotesRemoteHost>/sqldrivers"
         COMMENT "Copying Qt SQL plugins next to executable"
         VERBATIM
     )
@@ -97,9 +111,9 @@ if(APPLE)
     # This populates Contents/Frameworks/ (Qt frameworks) and Contents/PlugIns/
     # (platforms, imageformats, styles, tls, sqldrivers, …) for both Debug and
     # Release so the app is self-contained and runnable outside Qt Creator.
-    add_custom_command(TARGET SQLSyncAdmin POST_BUILD
+    add_custom_command(TARGET ProjectNotesRemoteHost POST_BUILD
         COMMAND "${_qt_bin}/macdeployqt"
-            "$<TARGET_BUNDLE_DIR:SQLSyncAdmin>"
+            "$<TARGET_BUNDLE_DIR:ProjectNotesRemoteHost>"
             -always-overwrite
         COMMENT "Deploying Qt into app bundle (macdeployqt)"
         VERBATIM
@@ -108,21 +122,21 @@ if(APPLE)
     # Step 3: Copy vcpkg dylibs (libpq, libssl, libcrypto, …) into Contents/Frameworks/,
     # fix install names and cross-references, and patch every libqsqlpsql.dylib in the
     # bundle (both MacOS/sqldrivers/ and PlugIns/sqldrivers/ placed by macdeployqt).
-    add_custom_command(TARGET SQLSyncAdmin POST_BUILD
+    add_custom_command(TARGET ProjectNotesRemoteHost POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
-            "$<TARGET_FILE_DIR:SQLSyncAdmin>/../Frameworks"
+            "$<TARGET_FILE_DIR:ProjectNotesRemoteHost>/../Frameworks"
         COMMAND ${CMAKE_COMMAND}
             "-DVCPKG_LIB=$<IF:$<CONFIG:Debug>,${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/debug/lib,${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/lib>"
-            "-DFRAMEWORKS=$<TARGET_FILE_DIR:SQLSyncAdmin>/../Frameworks"
-            "-DBUNDLE=$<TARGET_BUNDLE_DIR:SQLSyncAdmin>"
-            "-DEXECUTABLE=$<TARGET_FILE:SQLSyncAdmin>"
+            "-DFRAMEWORKS=$<TARGET_FILE_DIR:ProjectNotesRemoteHost>/../Frameworks"
+            "-DBUNDLE=$<TARGET_BUNDLE_DIR:ProjectNotesRemoteHost>"
+            "-DEXECUTABLE=$<TARGET_FILE:ProjectNotesRemoteHost>"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/BundleMacLibs.cmake"
         COMMENT "Bundling vcpkg dylibs into Contents/Frameworks and patching rpaths"
         VERBATIM
     )
 endif()
 
-target_link_libraries(SQLSyncAdmin
+target_link_libraries(ProjectNotesRemoteHost
     PRIVATE
         Qt6::Core
         Qt6::Gui
@@ -141,10 +155,10 @@ if(WIN32)
     set(_PG_DLLS libpq.dll libpgtypes.dll libecpg.dll libecpg_compat.dll)
 
     foreach(_dll ${_PG_DLLS})
-        add_custom_command(TARGET SQLSyncAdmin POST_BUILD
+        add_custom_command(TARGET ProjectNotesRemoteHost POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "$<IF:$<CONFIG:Debug>,${_VCPKG_BIN_DIR}/debug/bin/${_dll},${_VCPKG_BIN_DIR}/bin/${_dll}>"
-                "$<TARGET_FILE_DIR:SQLSyncAdmin>/${_dll}"
+                "$<TARGET_FILE_DIR:ProjectNotesRemoteHost>/${_dll}"
             COMMENT "Copying ${_dll} for $<CONFIG>"
         )
     endforeach()

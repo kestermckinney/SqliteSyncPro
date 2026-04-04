@@ -12,7 +12,7 @@ int main(int argc, char *argv[])
 
     QApplication app(argc, argv);
 
-    app.setApplicationName(QStringLiteral("SQLSync Administrator"));
+    app.setApplicationName(QStringLiteral("Project Notes Remote Host"));
 
     // --developer-profile mirrors the same flag in ProjectNotes.  When set,
     // settings are stored under "ProjectNotes<PROFILE>/AppSettings" so the

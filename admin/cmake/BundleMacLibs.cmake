@@ -5,7 +5,7 @@
 # Required variables (passed via -D on the cmake -P command line):
 #   VCPKG_LIB   — vcpkg lib/ (or debug/lib/) directory for the current build config
 #   FRAMEWORKS  — path to Contents/Frameworks inside the built app bundle
-#   BUNDLE      — root of the app bundle (e.g. SQLSyncAdmin.app/)
+#   BUNDLE      — root of the app bundle (e.g. ProjectNotesRemoteHost.app/)
 #   EXECUTABLE  — path to the app's main executable (Contents/MacOS/<AppName>)
 
 cmake_minimum_required(VERSION 3.16)

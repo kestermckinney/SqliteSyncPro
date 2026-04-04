@@ -727,7 +727,7 @@ void AdminController::loadUsers()
 
     closeAdminConnection(db);
 
-    QSettings s(QStringLiteral("SqliteSyncPro"), QStringLiteral("SQLSyncAdmin"));
+    QSettings s(QStringLiteral("SqliteSyncPro"), QStringLiteral("ProjectNotesRemoteHost"));
     QStringList names;
     for (const auto &v : std::as_const(m_users))
         names << v.toMap().value(QStringLiteral("username")).toString();

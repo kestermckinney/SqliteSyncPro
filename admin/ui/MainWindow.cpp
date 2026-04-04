@@ -17,7 +17,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_controller(new AdminController(this))
 {
-    setWindowTitle(QStringLiteral("SQLSync Administrator"));
+    setWindowTitle(QStringLiteral("Project Notes Remote Host"));
     resize(900, 620);
     setMinimumSize(780, 540);
 
