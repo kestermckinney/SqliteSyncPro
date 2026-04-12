@@ -28,9 +28,10 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Network Sql Widgets 
 enable_testing()
 
 add_subdirectory(src)
-add_subdirectory(tests)
 
-add_subdirectory(examples/invoice)
-
-add_subdirectory(admin)
+if(NOT IOS)
+    add_subdirectory(tests)
+    add_subdirectory(examples/invoice)
+    add_subdirectory(admin)
+endif()
 

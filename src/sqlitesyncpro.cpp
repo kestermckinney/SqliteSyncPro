@@ -200,6 +200,18 @@ int SqliteSyncPro::syncIntervalMs() const
     return m_syncIntervalMs;
 }
 
+void SqliteSyncPro::setDefaultBatchSize(int size)
+{
+    QMutexLocker lock(&m_mutex);
+    m_defaultBatchSize = size;
+}
+
+int SqliteSyncPro::defaultBatchSize() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_defaultBatchSize;
+}
+
 // ---------------------------------------------------------------------------
 // Settings dialog
 // ---------------------------------------------------------------------------
@@ -484,6 +496,7 @@ bool SqliteSyncPro::initialize()
         for (const QString &name : tableNames) {
             SyncTableConfig cfg;
             cfg.tableName = name;
+            cfg.batchSize = m_defaultBatchSize;
             m_tables.append(cfg);
         }
         m_dbOpen = true;
@@ -545,19 +558,29 @@ bool SqliteSyncPro::initialize()
     connect(m_syncWorker, &SyncLoopWorker::authenticationRequired,
             this,          &SqliteSyncPro::authenticationRequired);
 
-    connect(m_syncWorker, &SyncLoopWorker::finished, this, [this]() {
+    // Capture the specific pointers created in THIS call to initialize().
+    // If initialize() is called again before these lambdas fire, m_syncWorker
+    // and m_syncThread will point to the NEW objects — capturing by value here
+    // ensures the old thread's cleanup only touches the objects it owns.
+    SyncLoopWorker *capturedWorker = m_syncWorker;
+    QThread        *capturedThread = m_syncThread;
+
+    connect(capturedWorker, &SyncLoopWorker::finished, this, [this, capturedThread]() {
         // Worker has exited its loop; quit the thread so QThread::finished fires.
-        m_syncThread->quit();
+        capturedThread->quit();
     });
-    connect(m_syncThread, &QThread::finished, this, [this]() {
+    connect(capturedThread, &QThread::finished, this, [this, capturedThread, capturedWorker]() {
         // Thread has fully stopped.  Clean up and notify the calling application.
-        delete m_syncWorker;
-        m_syncWorker = nullptr;
-        delete m_syncThread;
-        m_syncThread = nullptr;
+        delete capturedWorker;
+        if (m_syncWorker == capturedWorker)
+            m_syncWorker = nullptr;
+        delete capturedThread;
+        if (m_syncThread == capturedThread)
+            m_syncThread = nullptr;
         {
             QMutexLocker lock(&m_mutex);
-            m_initialized = false;
+            if (m_initialized && m_syncWorker == nullptr)
+                m_initialized = false;
         }
         emit syncStopped();
     });

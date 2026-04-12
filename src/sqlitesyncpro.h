@@ -115,6 +115,15 @@ public:
     void setSyncIntervalMs(int ms);
     int  syncIntervalMs() const;
 
+    /**
+     * Maximum rows pushed or pulled per table per sync cycle.
+     * Applies to all tables discovered by initialize().  Manually added
+     * tables (addTable) use the batchSize you supply there.
+     * Default: 100.  Must be set before initialize().
+     */
+    void setDefaultBatchSize(int size);
+    int  defaultBatchSize() const;
+
     // ------------------------------------------------------------------
     // Settings dialog
     // ------------------------------------------------------------------
@@ -320,6 +329,7 @@ private:
     QString m_databasePath;
     QString m_postgresTableName  = QStringLiteral("sync_data");
     int     m_syncIntervalMs     = 5000;
+    int     m_defaultBatchSize   = 100;
 
     // Runtime state (set during authenticate/initialize)
     QString m_authToken;
