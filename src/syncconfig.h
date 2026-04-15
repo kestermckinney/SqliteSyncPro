@@ -16,7 +16,7 @@
 struct SyncTableConfig
 {
     QString tableName;
-    int     batchSize           = 100;
+    int     batchSize           = 50;
     QString idColumn            = QStringLiteral("id");
     QString updatedDateColumn   = QStringLiteral("updateddate");
     QString syncDateColumn      = QStringLiteral("syncdate");

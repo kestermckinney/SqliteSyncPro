@@ -319,7 +319,7 @@ private:
     QString m_encryptionPhrase;
     QString m_databasePath;
     QString m_postgresTableName  = QStringLiteral("sync_data");
-    int     m_syncIntervalMs     = 5000;
+    int     m_syncIntervalMs     = 30000;
 
     // Runtime state (set during authenticate/initialize)
     QString m_authToken;

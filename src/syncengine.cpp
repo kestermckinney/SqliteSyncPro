@@ -192,10 +192,12 @@ SyncResult SyncEngine::synchronizeTable(const SyncTableConfig &config)
 //
 // jsonrowdata holds every SQLite column except syncdate.
 //
-// Fine-grained locking strategy:
+// Batched locking and HTTP strategy (replaces the old per-record approach):
 //   1. Acquire write lock → SELECT all dirty records into a buffer → release lock
-//   2. For each buffered record: do all HTTP calls with NO lock held
-//   3. After each successful upload: acquire write lock briefly → stamp SYNCDATE → release
+//   2. ONE batch GET to fetch server timestamps for all pending IDs (no lock held)
+//   3. Categorise: upsert candidates vs. conflicts vs. equal-timestamp
+//   4. ONE batch POST upsert for all candidates (no lock held)
+//   5. Acquire write lock → bulk UPDATE syncdate for all stamped records → release lock
 // ---------------------------------------------------------------------------
 
 int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult &tableResult)
@@ -241,152 +243,168 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
 
         if (m_dbLock) m_dbLock->unlock();
     }
+
+    if (pending.isEmpty())
+        return 0;
+
     // Write lock is now released; HTTP calls follow with no lock held.
 
-    // qDebug().noquote() << QStringLiteral("[SyncEngine] Push '%1': %2 local record(s) pending (batchSize=%3)")
-    //                           .arg(config.tableName).arg(pending.size()).arg(config.batchSize);
+    // --- Step 2: ONE batch GET to retrieve server timestamps for all pending IDs ---
+    QStringList idList;
+    idList.reserve(pending.size());
+    for (const auto &pr : pending)
+        idList << pr.id;
 
-    int pushed = 0;
+    QUrlQuery checkQuery;
+    checkQuery.addQueryItem(QStringLiteral("tablename"),
+                            QStringLiteral("eq.%1").arg(config.tableName));
+    checkQuery.addQueryItem(QStringLiteral("id"),
+                            QStringLiteral("in.(%1)").arg(idList.join(QLatin1Char(','))));
+    checkQuery.addQueryItem(QStringLiteral("select"), QStringLiteral("id,updateddate"));
 
-    // --- Step 2: process each buffered record – HTTP only, no lock held ---
+    const QByteArray checkResp = m_httpClient->get(m_postgresTableName, checkQuery);
+    if (!m_httpClient->wasSuccessful()) {
+        tableResult.errorMessage = QStringLiteral("Server batch check failed: %1")
+                                       .arg(m_httpClient->lastError());
+        if (m_httpClient->lastStatusCode() == 0) {
+            tableResult.networkError = true;
+#ifdef QT_DEBUG
+            qWarning().noquote() << QStringLiteral("[SyncEngine] Network error on batch push check ('%1'): server unreachable (status 0)")
+                                        .arg(config.tableName);
+#endif
+        } else if (m_httpClient->lastStatusCode() == 401) {
+            tableResult.authError = true;
+#ifdef QT_DEBUG
+            qWarning().noquote() << QStringLiteral("[SyncEngine] 401 Unauthorized on batch push check ('%1'): JWT may have expired")
+                                        .arg(config.tableName);
+#endif
+        } else {
+#ifdef QT_DEBUG
+            qWarning().noquote() << QStringLiteral("[SyncEngine] Batch push check failed ('%1'): HTTP %2 — %3")
+                                        .arg(config.tableName)
+                                        .arg(m_httpClient->lastStatusCode())
+                                        .arg(m_httpClient->lastError());
+#endif
+        }
+        return -1;
+    }
+
+    // Build id → serverTs map from the batch response.
+    QHash<QString, qint64> serverTimestamps;
+    const QJsonArray checkArr = QJsonDocument::fromJson(checkResp).array();
+    for (const QJsonValue &v : checkArr) {
+        const QJsonObject obj = v.toObject();
+        serverTimestamps.insert(
+            obj.value(QStringLiteral("id")).toString(),
+            obj.value(QStringLiteral("updateddate")).toVariant().toLongLong());
+    }
+
+    // --- Step 3: categorise records and build batch upsert payload ---
+    QJsonArray   upsertBatch;
+    QList<QString> toStampIds;   // uploaded records that need SYNCDATE stamped
+    QList<QString> equalIds;     // equal-timestamp records that just need SYNCDATE stamped
+
     for (const PendingRecord &pr : pending) {
-        const QString    &recordId = pr.id;
-        const qint64      localTs  = pr.ts;
-        const QJsonObject &rowJson = pr.rowJson;
+        const bool   onServer = serverTimestamps.contains(pr.id);
+        const qint64 srvTs    = onServer ? serverTimestamps.value(pr.id) : -1;
 
-        // Check whether this record already exists on the server
-        QUrlQuery checkQuery;
-        checkQuery.addQueryItem(QStringLiteral("tablename"),
-                                QStringLiteral("eq.%1").arg(config.tableName));
-        checkQuery.addQueryItem(QStringLiteral("id"),
-                                QStringLiteral("eq.%1").arg(recordId));
-        checkQuery.addQueryItem(QStringLiteral("select"),
-                                QStringLiteral("id,updateddate"));
-
-        const QByteArray checkResp = m_httpClient->get(m_postgresTableName, checkQuery);
-        if (!m_httpClient->wasSuccessful()) {
-            tableResult.errorMessage =
-                QStringLiteral("Server check failed for record %1: %2")
-                    .arg(recordId, m_httpClient->lastError());
-            if (m_httpClient->lastStatusCode() == 0) {
-                tableResult.networkError = true;
-#ifdef QT_DEBUG
-                qWarning().noquote() << QStringLiteral("[SyncEngine] Network error pushing record %1 ('%2'): server unreachable (status 0)")
-                                            .arg(recordId, config.tableName);
-#endif
-            } else if (m_httpClient->lastStatusCode() == 401) {
-                tableResult.authError = true;
-#ifdef QT_DEBUG
-                qWarning().noquote() << QStringLiteral("[SyncEngine] 401 Unauthorized pushing record %1 ('%2'): JWT may have expired")
-                                            .arg(recordId, config.tableName);
-#endif
-            } else {
-#ifdef QT_DEBUG
-                qWarning().noquote() << QStringLiteral("[SyncEngine] Push check failed for record %1 ('%2'): HTTP %3 — %4")
-                                            .arg(recordId, config.tableName)
-                                            .arg(m_httpClient->lastStatusCode())
-                                            .arg(m_httpClient->lastError());
-#endif
-            }
-            return -1;
+        if (onServer && srvTs > pr.ts) {
+            // Server is newer → conflict; server wins; resolved in pull phase
+            ++tableResult.conflicts;
+            continue;
         }
 
-        const QJsonArray checkArr = QJsonDocument::fromJson(checkResp).array();
+        if (onServer && srvTs == pr.ts) {
+            // Equal timestamps → already in sync; just stamp SYNCDATE locally
+            equalIds << pr.id;
+            continue;
+        }
 
-        bool uploadOk = false;
-
-        // Serialise rowJson; encrypt if a key is set.
+        // New record or local is newer → include in upsert batch
         QJsonValue jsonRowDataValue;
         if (!m_encryptionKey.isEmpty()) {
-            const QByteArray plain = QJsonDocument(rowJson).toJson(QJsonDocument::Compact);
+            const QByteArray plain = QJsonDocument(pr.rowJson).toJson(QJsonDocument::Compact);
             const QString enc = RowEncryption::encrypt(plain, m_encryptionKey);
             if (enc.isEmpty()) {
 #ifdef QT_DEBUG
-                qWarning() << "Encryption failed for record" << recordId << "– skipping";
+                qWarning() << "Encryption failed for record" << pr.id << "– skipping";
 #endif
                 continue;
             }
             jsonRowDataValue = enc;
         } else {
-            jsonRowDataValue = rowJson;
+            jsonRowDataValue = pr.rowJson;
         }
 
-        if (checkArr.isEmpty()) {
-            // Record does not exist on server → POST
-            QJsonObject payload;
-            if (!m_userId.isEmpty())
-                payload[QStringLiteral("userid")]      = m_userId;
-            payload[QStringLiteral("tablename")]   = config.tableName;
-            payload[QStringLiteral("id")]          = recordId;
-            payload[QStringLiteral("updateddate")] = localTs;
-            payload[QStringLiteral("jsonrowdata")] = jsonRowDataValue;
+        QJsonObject payload;
+        if (!m_userId.isEmpty())
+            payload[QStringLiteral("userid")]      = m_userId;
+        payload[QStringLiteral("tablename")]   = config.tableName;
+        payload[QStringLiteral("id")]          = pr.id;
+        payload[QStringLiteral("updateddate")] = pr.ts;
+        payload[QStringLiteral("jsonrowdata")] = jsonRowDataValue;
 
-            m_httpClient->post(m_postgresTableName,
-                               QJsonDocument(payload).toJson(QJsonDocument::Compact),
-                               {QStringLiteral("return=minimal")});
-            uploadOk = m_httpClient->wasSuccessful();
+        upsertBatch.append(payload);
+        toStampIds << pr.id;
+    }
+
+    // --- Step 4: ONE batch upsert POST for all candidates ---
+    if (!upsertBatch.isEmpty()) {
+        m_httpClient->post(m_postgresTableName,
+                           QJsonDocument(upsertBatch).toJson(QJsonDocument::Compact),
+                           {QStringLiteral("resolution=merge-duplicates"),
+                            QStringLiteral("return=minimal")});
+        if (!m_httpClient->wasSuccessful()) {
+            tableResult.errorMessage = QStringLiteral("Batch upsert failed: %1")
+                                           .arg(m_httpClient->lastError());
+            if (m_httpClient->lastStatusCode() == 0)
+                tableResult.networkError = true;
+            else if (m_httpClient->lastStatusCode() == 401)
+                tableResult.authError = true;
 #ifdef QT_DEBUG
-            if (!uploadOk)
-                qWarning() << "POST failed for" << recordId << m_httpClient->lastError();
+            qWarning().noquote() << QStringLiteral("[SyncEngine] Batch upsert failed ('%1'): HTTP %2 — %3")
+                                        .arg(config.tableName)
+                                        .arg(m_httpClient->lastStatusCode())
+                                        .arg(m_httpClient->lastError());
 #endif
-
-        } else {
-            const qint64 serverTs = checkArr.first().toObject()
-                                        .value(QStringLiteral("updateddate"))
-                                        .toVariant().toLongLong();
-
-            if (localTs > serverTs) {
-                // Local is newer → PATCH
-                QUrlQuery patchQuery;
-                patchQuery.addQueryItem(QStringLiteral("tablename"),
-                                        QStringLiteral("eq.%1").arg(config.tableName));
-                patchQuery.addQueryItem(QStringLiteral("id"),
-                                        QStringLiteral("eq.%1").arg(recordId));
-
-                QJsonObject payload;
-                payload[QStringLiteral("updateddate")] = localTs;
-                payload[QStringLiteral("jsonrowdata")] = jsonRowDataValue;
-
-                m_httpClient->patch(m_postgresTableName, patchQuery,
-                                    QJsonDocument(payload).toJson(QJsonDocument::Compact));
-                uploadOk = m_httpClient->wasSuccessful();
-#ifdef QT_DEBUG
-                if (!uploadOk)
-                    qWarning() << "PATCH failed for" << recordId << m_httpClient->lastError();
-#endif
-
-            } else if (serverTs > localTs) {
-                // Server is newer → conflict; server wins; resolved in pull phase
-                ++tableResult.conflicts;
-                continue;
-            } else {
-                // Equal timestamps → already in sync; just stamp SYNCDATE
-                uploadOk = true;
-            }
+            return -1;
         }
+    }
 
-        // --- Step 3: stamp SYNCDATE under a brief write lock ---
-        if (uploadOk) {
-            if (m_dbLock) m_dbLock->lockForWrite();
+    // --- Step 5: bulk UPDATE syncdate for all stamped records under one write lock ---
+    const QList<QString> allToStamp = toStampIds + equalIds;
+    int pushed = 0;
 
-            QSqlQuery stampQ(m_db);
-            stampQ.prepare(QStringLiteral(
-                "UPDATE \"%1\" SET \"%2\" = \"%3\" WHERE \"%4\" = :id"
-            ).arg(config.tableName, config.syncDateColumn,
-                  config.updatedDateColumn, config.idColumn));
-            stampQ.bindValue(QStringLiteral(":id"), recordId);
-            if (stampQ.exec()) {
-                ++pushed;
-                if (m_dbLock) m_dbLock->unlock();
-                emit progress(config.tableName, pushed, -1);
-            } else {
-                if (m_dbLock) m_dbLock->unlock();
-#ifdef QT_DEBUG
-                qWarning() << "Failed to stamp SYNCDATE for" << recordId
-                           << stampQ.lastError().text();
-#endif
-            }
+    if (!allToStamp.isEmpty()) {
+        QStringList placeholders;
+        placeholders.reserve(allToStamp.size());
+        for (int i = 0; i < allToStamp.size(); ++i)
+            placeholders << QStringLiteral(":id%1").arg(i);
+
+        QSqlQuery stampQ(m_db);
+        stampQ.prepare(QStringLiteral(
+            "UPDATE \"%1\" SET \"%2\" = \"%3\" WHERE \"%4\" IN (%5)"
+        ).arg(config.tableName, config.syncDateColumn,
+              config.updatedDateColumn, config.idColumn,
+              placeholders.join(QStringLiteral(", "))));
+
+        for (int i = 0; i < allToStamp.size(); ++i)
+            stampQ.bindValue(QStringLiteral(":id%1").arg(i), allToStamp[i]);
+
+        if (m_dbLock) m_dbLock->lockForWrite();
+        if (stampQ.exec()) {
+            pushed = stampQ.numRowsAffected();
         }
+#ifdef QT_DEBUG
+        else {
+            qWarning() << "Bulk SYNCDATE stamp failed for table" << config.tableName
+                       << stampQ.lastError().text();
+        }
+#endif
+        if (m_dbLock) m_dbLock->unlock();
+
+        if (pushed > 0)
+            emit progress(config.tableName, pushed, -1);
     }
 
     return pushed;
