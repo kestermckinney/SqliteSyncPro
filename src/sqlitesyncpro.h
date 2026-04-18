@@ -5,6 +5,7 @@
 #include <QObject>
 #include <QList>
 #include <QMutex>
+#include <QPointer>
 #include <QReadWriteLock>
 #include <QSqlDatabase>
 #include <QString>
@@ -15,6 +16,7 @@
 class QThread;
 class QWidget;
 class SyncLoopWorker;
+class SyncStatsWindow;
 
 /**
  * SqliteSyncPro – main public API.
@@ -127,6 +129,23 @@ public:
      * Returns true if the user accepted.
      */
     bool showSettingsDialog(QWidget *parent = nullptr);
+
+    /**
+     * Show (show == true) or hide (show == false) the network traffic stats window.
+     *
+     * When shown the window displays a scrolling chart of upload/download KB per
+     * sync cycle and a text log with per-table byte and row counts.  The window
+     * emits windowClosed() when the user closes it — connect to statsWindowClosed()
+     * to keep a menu checkmark in sync.
+     *
+     * Calling showStats(true) while the window is already visible brings it to
+     * the front.  Calling showStats(false) hides (but does not destroy) the window
+     * so its history is preserved if shown again.
+     */
+    void showStats(bool show = true);
+
+    /** Returns true if the stats window is currently visible. */
+    bool isStatsVisible() const;
 
     // ------------------------------------------------------------------
     // Initialization
@@ -303,6 +322,12 @@ signals:
      */
     void syncStatusUpdated(int percentComplete, qint64 pendingPush, qint64 pendingPull);
 
+    /**
+     * Emitted when the user closes the stats window via its title-bar button.
+     * Connect this to uncheck any "Sync Stats" menu action in the host application.
+     */
+    void statsWindowClosed();
+
 private:
     bool    doAuthenticate();
     SyncResult runSync(const QList<SyncTableConfig> &tables);
@@ -347,4 +372,7 @@ private:
     // Background loop
     QThread         *m_syncThread = nullptr;
     SyncLoopWorker  *m_syncWorker = nullptr;
+
+    // Stats window (optional; created on first showStats(true) call)
+    QPointer<SyncStatsWindow> m_statsWindow;
 };
