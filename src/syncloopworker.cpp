@@ -7,7 +7,6 @@
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
-#include <QUrlQuery>
 #include <QUuid>
 #include <QDebug>
 
@@ -128,66 +127,21 @@ void SyncLoopWorker::run()
                                       .arg(combined.success ? QString() : QStringLiteral(", error: ") + combined.errorMessage);
 #endif
 
-            // Query pending counts so we can log how much work remains.
-            // Local dirty count (syncdate IS NULL) → still needs push.
-            // Server count filtered by updateddate >= lastPullTime → still needs pull
-            // (same filter as the actual pull, so it counts exactly what remains).
+#ifdef QT_DEBUG
             {
                 qint64 pendingPush = 0;
-                QList<qint64> lastPullTimes;
-                lastPullTimes.reserve(m_tables.size());
-
-                {
-                    QReadLocker lock(m_dbLock);
-                    for (const auto &cfg : m_tables) {
-                        QSqlQuery q(db);
-                        q.exec(QStringLiteral("SELECT COUNT(*) FROM \"%1\" WHERE syncdate IS NULL")
-                                   .arg(cfg.tableName));
-                        if (q.next())
-                            pendingPush += q.value(0).toLongLong();
-
-                        qint64 lastPull = 0;
-                        q.prepare(QStringLiteral(
-                            "SELECT last_pull_time FROM _sync_meta WHERE table_name = :name"));
-                        q.bindValue(QStringLiteral(":name"), cfg.tableName);
-                        q.exec();
-                        if (q.next())
-                            lastPull = q.value(0).toLongLong();
-                        lastPullTimes << lastPull;
-                    }
+                QReadLocker lock(m_dbLock);
+                for (const auto &cfg : m_tables) {
+                    QSqlQuery q(db);
+                    q.exec(QStringLiteral("SELECT COUNT(*) FROM \"%1\" WHERE syncdate IS NULL")
+                               .arg(cfg.tableName));
+                    if (q.next())
+                        pendingPush += q.value(0).toLongLong();
                 }
-
-                qint64 pendingPull = 0;
-                bool   pullUnknown = false;
-
-                if (combined.hasNetworkError()) {
-                    pullUnknown = true;
-                } else if (combined.totalPulled() > 0) {
-                    // Records came down this cycle — query the server to see how many remain.
-                    for (int i = 0; i < m_tables.size(); ++i) {
-                        QUrlQuery query;
-                        query.addQueryItem(QStringLiteral("tablename"),
-                                           QStringLiteral("eq.%1").arg(m_tables[i].tableName));
-                        query.addQueryItem(QStringLiteral("updateddate"),
-                                           QStringLiteral("gt.%1").arg(lastPullTimes[i]));
-                        const int serverCount = http.countRows(m_postgresTableName, query);
-                        if (serverCount < 0)
-                            pullUnknown = true;
-                        else
-                            pendingPull += serverCount;
-                    }
-                }
-                // else: pulled 0 with no network error — lastPullTime has advanced past all
-                // available server records (or everything was conflict-skipped); pendingPull = 0.
-
-#ifdef QT_DEBUG
                 qDebug().noquote()
-                    << QStringLiteral("[SyncLoopWorker] Remaining: push=%1, pull=%2")
-                           .arg(pendingPush)
-                           .arg(pullUnknown ? QStringLiteral("unknown (server unreachable)")
-                                           : QString::number(pendingPull));
-#endif
+                    << QStringLiteral("[SyncLoopWorker] Remaining push: %1").arg(pendingPush);
             }
+#endif
 
             emit syncCompleted(combined);
 
