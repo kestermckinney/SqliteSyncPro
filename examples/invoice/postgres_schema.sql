@@ -15,32 +15,32 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- =============================================================================
 -- Roles
--- PostgREST connects as 'authenticator', switches to 'anon' or a user role.
--- Individual sync users are NOLOGIN roles granting app_user and listed in
+-- PostgREST connects as 'pnauthenticator', switches to 'pnanon' or a user role.
+-- Individual sync users are NOLOGIN roles granting pnapp_user and listed in
 -- auth_users.  rpc_login validates them and issues JWTs with role=username.
 -- =============================================================================
 
 DO $$ BEGIN
-    CREATE ROLE authenticator NOINHERIT LOGIN PASSWORD 'change_me_in_production';
+    CREATE ROLE pnauthenticator NOINHERIT LOGIN PASSWORD 'change_me_in_production';
 EXCEPTION WHEN duplicate_object THEN
-    RAISE NOTICE 'Role authenticator already exists, skipping.';
+    RAISE NOTICE 'Role pnauthenticator already exists, skipping.';
 END $$;
 
 DO $$ BEGIN
-    CREATE ROLE anon NOLOGIN;
+    CREATE ROLE pnanon NOLOGIN;
 EXCEPTION WHEN duplicate_object THEN
-    RAISE NOTICE 'Role anon already exists, skipping.';
+    RAISE NOTICE 'Role pnanon already exists, skipping.';
 END $$;
 
 DO $$ BEGIN
-    CREATE ROLE app_user NOLOGIN;
+    CREATE ROLE pnapp_user NOLOGIN;
 EXCEPTION WHEN duplicate_object THEN
-    RAISE NOTICE 'Role app_user already exists, skipping.';
+    RAISE NOTICE 'Role pnapp_user already exists, skipping.';
 END $$;
 
-GRANT anon     TO authenticator;
-GRANT app_user TO authenticator;
-GRANT USAGE ON SCHEMA public TO anon, app_user;
+GRANT pnanon     TO pnauthenticator;
+GRANT pnapp_user TO pnauthenticator;
+GRANT USAGE ON SCHEMA public TO pnanon, pnapp_user;
 
 
 -- =============================================================================
@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS auth_users (
                          DEFAULT (EXTRACT(EPOCH FROM now()) * 1000)::BIGINT
 );
 
-REVOKE ALL ON auth_users FROM PUBLIC, anon, app_user;
+REVOKE ALL ON auth_users FROM PUBLIC, pnanon, pnapp_user;
 
 
 -- =============================================================================
@@ -126,7 +126,7 @@ CREATE POLICY sync_data_insert ON sync_data
 CREATE POLICY sync_data_update ON sync_data
     FOR UPDATE USING (userid = current_user);
 
-GRANT SELECT, INSERT, UPDATE ON sync_data TO app_user;
+GRANT SELECT, INSERT, UPDATE ON sync_data TO pnapp_user;
 
 
 -- =============================================================================
@@ -180,15 +180,15 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 REVOKE ALL     ON FUNCTION rpc_login(TEXT, TEXT) FROM PUBLIC;
-GRANT  EXECUTE ON FUNCTION rpc_login(TEXT, TEXT) TO anon;
+GRANT  EXECUTE ON FUNCTION rpc_login(TEXT, TEXT) TO pnanon;
 
 
 -- =============================================================================
 -- To add a sync user (run as superuser after setup):
 --
 --   CREATE ROLE alice NOLOGIN;
---   GRANT app_user TO alice;
---   GRANT alice TO authenticator;
+--   GRANT pnapp_user TO alice;
+--   GRANT alice TO pnauthenticator;
 --   INSERT INTO auth_users (username, password_hash)
 --   VALUES ('alice', crypt('secret123', gen_salt('bf', 12)));
 --

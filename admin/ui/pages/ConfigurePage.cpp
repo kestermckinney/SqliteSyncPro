@@ -74,7 +74,7 @@ ConfigurePage::ConfigurePage(AdminController *controller, QWidget *parent)
         QLabel *k = new QLabel(key);
         k->setStyleSheet(QStringLiteral("font-size: 13px; color: #607d8b; border: none;"));
         *valueLabel = new QLabel;
-        (*valueLabel)->setStyleSheet(QStringLiteral("font-size: 13px; border: none;"));
+        (*valueLabel)->setStyleSheet(QStringLiteral("font-size: 13px; color: black; border: none;"));
         grid->addWidget(k,           row, 0);
         grid->addWidget(*valueLabel, row, 1);
     };
@@ -97,7 +97,7 @@ ConfigurePage::ConfigurePage(AdminController *controller, QWidget *parent)
 
     const QStringList items = {
         QStringLiteral("pgcrypto extension"),
-        QStringLiteral("Roles: authenticator, anon, app_user (skipped automatically on hosted services)"),
+        QStringLiteral("Roles: pnauthenticator, pnanon, pnapp_user (skipped automatically on hosted services)"),
         QStringLiteral("JWT helper functions (_base64url_encode, _sign_jwt)"),
         QStringLiteral("auth_users table with bcrypt password hashing"),
         QStringLiteral("sync_data table with Row-Level Security"),

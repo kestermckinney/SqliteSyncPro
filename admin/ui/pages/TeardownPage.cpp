@@ -105,7 +105,7 @@ TeardownPage::TeardownPage(AdminController *controller, QWidget *parent)
     });
 
     addSection(QStringLiteral("Database Roles (self-hosted only):"), {
-        QStringLiteral("anon, app_user, authenticator, postgrest_db"),
+        QStringLiteral("pnanon, pnapp_user, pnauthenticator, postgrest_db"),
     });
 
     confLayout->addWidget(deleteBox);

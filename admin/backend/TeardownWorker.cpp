@@ -95,9 +95,9 @@ void TeardownWorker::runTeardown(const QString &host,
     // existence at the application level and issue each command as a direct
     // SQL statement so they actually execute.
     if (!supabaseMode) {
-        for (const QString &role : {QStringLiteral("anon"),
-                                     QStringLiteral("app_user"),
-                                     QStringLiteral("authenticator"),
+        for (const QString &role : {QStringLiteral("pnanon"),
+                                     QStringLiteral("pnapp_user"),
+                                     QStringLiteral("pnauthenticator"),
                                      QStringLiteral("postgrest_db")}) {
             // Check existence
             QSqlQuery chk(m_db);

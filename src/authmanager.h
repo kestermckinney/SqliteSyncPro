@@ -7,11 +7,11 @@
 class HttpClient;
 
 /**
- * Manages authentication for both self-hosted PostgREST and Supabase.
+ * Manages authentication for self-hosted PostgREST, Supabase, and Neon.
  *
- * Single login() method accepts any auth endpoint plus email/password.
- * On success the JWT is set on the HttpClient so all subsequent sync
- * requests carry the correct Authorization header.
+ * login() and loginViaGet() accept email/password and set the JWT on the
+ * HttpClient so all subsequent sync requests carry the correct Authorization
+ * header.
  */
 class AuthManager : public QObject
 {
@@ -40,6 +40,18 @@ public:
                const QString &authEndpoint,
                const QString &email,
                const QString &password);
+
+    /**
+     * Authenticate via GET /rpc/rpc_login?username=…&password=… (Neon).
+     *
+     * PostgREST maps this GET to SELECT * FROM rpc_login(username, password).
+     * The response is a JSON array; the token is read from result[0]["token"].
+     *
+     * On success the token is set on the client via setAuthToken().
+     */
+    bool loginViaGet(HttpClient    *client,
+                     const QString &email,
+                     const QString &password);
 
     /** Use a pre-obtained JWT directly. Sets the token on the client. */
     bool setToken(HttpClient *client, const QString &token);

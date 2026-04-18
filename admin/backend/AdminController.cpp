@@ -864,35 +864,35 @@ void AdminController::addUser(const QString &username, const QString &password)
     }
     logSql("addUser/CREATE ROLE", QStringLiteral("CREATE ROLE \"%1\" LOGIN PASSWORD '***'").arg(uname), q, true);
 
-    // --- Step 2: GRANT app_user ---
-    const QString sqlGrant1 = QStringLiteral("GRANT app_user TO \"%1\"").arg(uname);
+    // --- Step 2: GRANT pnapp_user ---
+    const QString sqlGrant1 = QStringLiteral("GRANT pnapp_user TO \"%1\"").arg(uname);
 #ifdef QT_DEBUG
     qDebug() << "[AdminController::addUser] Step 2:" << sqlGrant1;
 #endif
     if (!q.exec(sqlGrant1)) {
-        logSql("addUser/GRANT app_user", sqlGrant1, q, false);
+        logSql("addUser/GRANT pnapp_user", sqlGrant1, q, false);
         const QString err = q.lastError().databaseText();
         db.rollback();
         closeAdminConnection(db);
         emit userAdded(false, err);
         return;
     }
-    logSql("addUser/GRANT app_user", sqlGrant1, q, true);
+    logSql("addUser/GRANT pnapp_user", sqlGrant1, q, true);
 
-    // --- Step 3: GRANT user TO authenticator ---
-    const QString sqlGrant2 = QStringLiteral("GRANT \"%1\" TO authenticator").arg(uname);
+    // --- Step 3: GRANT user TO pnauthenticator ---
+    const QString sqlGrant2 = QStringLiteral("GRANT \"%1\" TO pnauthenticator").arg(uname);
 #ifdef QT_DEBUG
     qDebug() << "[AdminController::addUser] Step 3:" << sqlGrant2;
 #endif
     if (!q.exec(sqlGrant2)) {
-        logSql("addUser/GRANT TO authenticator", sqlGrant2, q, false);
+        logSql("addUser/GRANT TO pnauthenticator", sqlGrant2, q, false);
         const QString err = q.lastError().databaseText();
         db.rollback();
         closeAdminConnection(db);
         emit userAdded(false, err);
         return;
     }
-    logSql("addUser/GRANT TO authenticator", sqlGrant2, q, true);
+    logSql("addUser/GRANT TO pnauthenticator", sqlGrant2, q, true);
 
     // --- Step 4: Compute bcrypt hash via prepared statement ---
     // We keep prepare()+bindValue() here so the password is never interpolated into SQL.
@@ -1332,14 +1332,14 @@ void AdminController::copyToClipboard(const QString &text)
 QString AdminController::postgrestConfig() const
 {
     if (isSupabaseMode()) {
-        // In Supabase mode: PostgREST uses app_user role for all requests;
+        // In Supabase mode: PostgREST uses pnapp_user role for all requests;
         // Supabase Auth issues JWTs verified by PostgREST using the Supabase JWT secret.
         // The jwt-secret must match the JWT secret shown in your Supabase project settings
         // (Settings → API → JWT Settings → JWT Secret).
         return QStringLiteral(
                    "db-uri = \"postgres://%1:%2@%3:%4/%5\"\n"
                    "db-schema = \"public\"\n"
-                   "db-anon-role = \"anon\"\n"
+                   "db-anon-role = \"pnanon\"\n"
                    "# Set jwt-secret to your Supabase JWT secret (Settings → API → JWT Settings):\n"
                    "jwt-secret = \"<your-supabase-jwt-secret>\"\n"
                    "server-host = \"*\"\n"
@@ -1352,9 +1352,9 @@ QString AdminController::postgrestConfig() const
     }
 
     return QStringLiteral(
-               "db-uri = \"postgres://authenticator:%1@%2:%3/%4\"\n"
+               "db-uri = \"postgres://pnauthenticator:%1@%2:%3/%4\"\n"
                "db-schema = \"public\"\n"
-               "db-anon-role = \"anon\"\n"
+               "db-anon-role = \"pnanon\"\n"
                "jwt-secret = \"%5\"\n"
                "server-host = \"*\"\n"
                "server-port = 3000\n")

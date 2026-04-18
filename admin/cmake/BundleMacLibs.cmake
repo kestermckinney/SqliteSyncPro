@@ -3,10 +3,11 @@
 # Post-build script that bundles vcpkg dynamic libraries into a macOS app bundle.
 #
 # Required variables (passed via -D on the cmake -P command line):
-#   VCPKG_LIB   — vcpkg lib/ (or debug/lib/) directory for the current build config
-#   FRAMEWORKS  — path to Contents/Frameworks inside the built app bundle
-#   BUNDLE      — root of the app bundle (e.g. ProjectNotesRemoteHost.app/)
-#   EXECUTABLE  — path to the app's main executable (Contents/MacOS/<AppName>)
+#   VCPKG_LIB        — project-local vcpkg lib/ (or debug/lib/) for the current build config
+#   VCPKG_GLOBAL_LIB — global vcpkg lib/ directory (fallback source for libpq and other libs)
+#   FRAMEWORKS       — path to Contents/Frameworks inside the built app bundle
+#   BUNDLE           — root of the app bundle (e.g. ProjectNotesRemoteHost.app/)
+#   EXECUTABLE       — path to the app's main executable (Contents/MacOS/<AppName>)
 
 cmake_minimum_required(VERSION 3.16)
 
@@ -53,7 +54,23 @@ function(resign dylib)
         OUTPUT_QUIET ERROR_QUIET)
 endfunction()
 
-# ── 1. Copy vcpkg dylibs → Frameworks/ ───────────────────────────────────────
+# Copy a dylib from src_dir to FRAMEWORKS if not already present there.
+# Returns the name in out_var if copied (empty string if skipped).
+function(bundle_lib_if_missing src_dir name out_var)
+    set(${out_var} "" PARENT_SCOPE)
+    set(_dest "${FRAMEWORKS}/${name}")
+    if(NOT EXISTS "${_dest}")
+        set(_src "${src_dir}/${name}")
+        if(EXISTS "${_src}")
+            get_filename_component(_real "${_src}" REALPATH)
+            file(COPY_FILE "${_real}" "${_dest}" ONLY_IF_DIFFERENT)
+            set(${out_var} "${name}" PARENT_SCOPE)
+            message(STATUS "Bundled (global): ${name}")
+        endif()
+    endif()
+endfunction()
+
+# ── 1. Copy project-local vcpkg dylibs → Frameworks/ ─────────────────────────
 # Resolves symlinks so every versioned name (e.g. libpq.5.dylib) is copied as a
 # real file, not a symlink — dyld inside a bundle cannot follow symlinks reliably.
 
@@ -80,6 +97,23 @@ else()
     message(WARNING
         "BundleMacLibs: vcpkg lib dir not found: ${VCPKG_LIB}\n"
         "Run CMake to trigger vcpkg install with a dynamic triplet, then rebuild.")
+endif()
+
+# ── 1b. Supplement with global vcpkg dylibs missing from the local install ────
+# libpq and related PostgreSQL client libs may not be in the project's manifest
+# (to avoid a full from-source build), but the global vcpkg may have them.
+
+if(EXISTS "${VCPKG_GLOBAL_LIB}")
+    file(GLOB _global_libs "${VCPKG_GLOBAL_LIB}/*.dylib")
+    foreach(_src ${_global_libs})
+        get_filename_component(_name "${_src}" NAME)
+        if(NOT EXISTS "${FRAMEWORKS}/${_name}")
+            get_filename_component(_real "${_src}" REALPATH)
+            file(COPY_FILE "${_real}" "${FRAMEWORKS}/${_name}" ONLY_IF_DIFFERENT)
+            list(APPEND _bundled_names "${_name}")
+            message(STATUS "Bundled (global vcpkg): ${_name}")
+        endif()
+    endforeach()
 endif()
 
 # ── 2. Fix install names and cross-references in each bundled dylib ───────────

@@ -138,47 +138,47 @@ void SetupWorker::runSetup(const QString &host,
     // the failure as a warning and continues rather than aborting setup.
     // -----------------------------------------------------------------------
     ok = roleStep(s++,
-        QStringLiteral("Create role: authenticator"),
+        QStringLiteral("Create role: pnauthenticator"),
         QStringLiteral(R"(
 DO $$
 BEGIN
-    CREATE ROLE authenticator NOINHERIT LOGIN PASSWORD '%1';
+    CREATE ROLE pnauthenticator NOINHERIT LOGIN PASSWORD '%1';
 EXCEPTION WHEN duplicate_object THEN
-    ALTER ROLE authenticator WITH LOGIN PASSWORD '%1';
+    ALTER ROLE pnauthenticator WITH LOGIN PASSWORD '%1';
 END $$)").arg(authenticatorPassword));
     if (!ok) goto rollback;
 
     ok = roleStep(s++,
-        QStringLiteral("Create role: anon"),
+        QStringLiteral("Create role: pnanon"),
         QStringLiteral(R"(
 DO $$ BEGIN
-    CREATE ROLE anon NOLOGIN;
+    CREATE ROLE pnanon NOLOGIN;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$)"));
     if (!ok) goto rollback;
 
     ok = roleStep(s++,
-        QStringLiteral("Create role: app_user"),
+        QStringLiteral("Create role: pnapp_user"),
         QStringLiteral(R"(
 DO $$ BEGIN
-    CREATE ROLE app_user NOLOGIN;
+    CREATE ROLE pnapp_user NOLOGIN;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$)"));
     if (!ok) goto rollback;
 
     ok = roleStep(s++,
-        QStringLiteral("Grant roles to authenticator"),
+        QStringLiteral("Grant roles to pnauthenticator"),
         QStringLiteral(R"(
 DO $$ BEGIN
-    GRANT anon     TO authenticator;
-    GRANT app_user TO authenticator;
+    GRANT pnanon     TO pnauthenticator;
+    GRANT pnapp_user TO pnauthenticator;
 END $$)"));
     if (!ok) goto rollback;
 
     ok = roleStep(s++,
         QStringLiteral("Grant schema usage to PostgREST roles"),
         QStringLiteral(
-            "GRANT USAGE ON SCHEMA public TO anon, app_user"));
+            "GRANT USAGE ON SCHEMA public TO pnanon, pnapp_user"));
     if (!ok) goto rollback;
 
     // -----------------------------------------------------------------------
@@ -257,7 +257,7 @@ CREATE TABLE IF NOT EXISTS auth_users (
 
         ok = authStep(s++,
             QStringLiteral("Lock down auth_users table"),
-            QStringLiteral("REVOKE ALL ON auth_users FROM PUBLIC, anon, app_user"));
+            QStringLiteral("REVOKE ALL ON auth_users FROM PUBLIC, pnanon, pnapp_user"));
         if (!ok) goto rollback;
     }
 
@@ -288,7 +288,7 @@ CREATE INDEX IF NOT EXISTS idx_sync_data_pull
     // Row-Level Security
     // Self-hosted:  current_user (PostgREST sets role = username from JWT)
     // Supabase mode: request.jwt.claims GUC (PostgREST sets this for each request;
-    //               all requests run as app_user role, RLS checks sub claim)
+    //               all requests run as pnapp_user role, RLS checks sub claim)
     // -----------------------------------------------------------------------
     ok = execStep(s++,
         QStringLiteral("Enable row-level security on sync_data"),
@@ -358,8 +358,8 @@ END $$)"));
     }
 
     ok = execStep(s++,
-        QStringLiteral("Grant sync_data access to app_user"),
-        QStringLiteral("GRANT SELECT, INSERT, UPDATE ON sync_data TO app_user"));
+        QStringLiteral("Grant sync_data access to pnapp_user"),
+        QStringLiteral("GRANT SELECT, INSERT, UPDATE ON sync_data TO pnapp_user"));
     if (!ok) goto rollback;
 
     // -----------------------------------------------------------------------
@@ -418,7 +418,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER)").arg(jwtSecret));
             QStringLiteral(R"(
 DO $$ BEGIN
     REVOKE ALL     ON FUNCTION rpc_login(TEXT, TEXT) FROM PUBLIC;
-    GRANT  EXECUTE ON FUNCTION rpc_login(TEXT, TEXT) TO anon;  -- username, password
+    GRANT  EXECUTE ON FUNCTION rpc_login(TEXT, TEXT) TO pnanon;  -- username, password
 END $$)"));
         if (!ok) goto rollback;
     }

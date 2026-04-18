@@ -127,6 +127,7 @@ if(APPLE)
             "$<TARGET_FILE_DIR:ProjectNotesRemoteHost>/../Frameworks"
         COMMAND ${CMAKE_COMMAND}
             "-DVCPKG_LIB=$<IF:$<CONFIG:Debug>,${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/debug/lib,${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/lib>"
+            "-DVCPKG_GLOBAL_LIB=$<IF:$<CONFIG:Debug>,${Z_VCPKG_ROOT_DIR}/installed/${VCPKG_TARGET_TRIPLET}/debug/lib,${Z_VCPKG_ROOT_DIR}/installed/${VCPKG_TARGET_TRIPLET}/lib>"
             "-DFRAMEWORKS=$<TARGET_FILE_DIR:ProjectNotesRemoteHost>/../Frameworks"
             "-DBUNDLE=$<TARGET_BUNDLE_DIR:ProjectNotesRemoteHost>"
             "-DEXECUTABLE=$<TARGET_FILE:ProjectNotesRemoteHost>"

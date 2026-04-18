@@ -330,6 +330,31 @@ bool SqliteSyncPro::doAuthenticate()
         m_supabaseKey  = resolvedSupabaseKey;
         if (!userId.isEmpty()) m_userId = userId;
         m_lastError.clear();
+    } else if (hostType == 2) {
+        // Neon — calls rpc_login via GET (SELECT semantics) since Neon does
+        // not support the PostgREST RPC POST endpoint for this function.
+        HttpClient http;
+        http.setBaseUrl(url);
+
+        QString authError;
+        AuthManager auth;
+        QObject::connect(&auth, &AuthManager::authenticationFailed,
+                         &auth, [&authError](const QString &reason) { authError = reason; });
+        QObject::connect(&auth, &AuthManager::networkError,
+                         &auth, [&authError](const QString &reason) { authError = reason; });
+        if (!auth.loginViaGet(&http, email, password)) {
+            QMutexLocker lock(&m_mutex);
+            m_lastError = authError.isEmpty()
+                              ? QStringLiteral("Neon authentication failed") : authError;
+            return false;
+        }
+        authToken = auth.token();
+        userId    = jwtSubject(authToken);
+
+        QMutexLocker lock(&m_mutex);
+        m_authToken = authToken;
+        if (!userId.isEmpty()) m_userId = userId;
+        m_lastError.clear();
     } else {
         // Self-hosted
         HttpClient http;

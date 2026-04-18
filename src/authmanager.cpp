@@ -2,6 +2,7 @@
 #include "authmanager.h"
 #include "httpclient.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDebug>
@@ -10,6 +11,7 @@
 #include <QNetworkReply>
 #include <QEventLoop>
 #include <QUrl>
+#include <QUrlQuery>
 
 AuthManager::AuthManager(QObject *parent)
     : QObject(parent)
@@ -129,6 +131,62 @@ bool AuthManager::login(HttpClient   *client,
     // above does not clear it, so subsequent sync calls carry both headers.
 #ifdef QT_DEBUG
     qInfo() << "[AuthManager::login] JWT obtained successfully";
+#endif
+    emit authenticated();
+    return true;
+}
+
+bool AuthManager::loginViaGet(HttpClient    *client,
+                               const QString &email,
+                               const QString &password)
+{
+    Q_ASSERT(client);
+    m_token.clear();
+
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("username"), email);
+    query.addQueryItem(QStringLiteral("password"), password);
+
+#ifdef QT_DEBUG
+    qInfo() << "[AuthManager::loginViaGet] GET rpc/rpc_login";
+#endif
+
+    const QByteArray response = client->get(QStringLiteral("rpc/rpc_login"), query);
+    const int statusCode = client->lastStatusCode();
+
+#ifdef QT_DEBUG
+    qInfo() << "[AuthManager::loginViaGet] status=" << statusCode;
+#endif
+
+    if (statusCode < 200 || statusCode >= 300) {
+        const QString reason = QStringLiteral("HTTP %1: %2")
+                                   .arg(statusCode)
+                                   .arg(QString::fromUtf8(response));
+        if (statusCode == 0)
+            emit networkError(reason);
+        else
+            emit authenticationFailed(reason);
+        return false;
+    }
+
+    // PostgREST returns a JSON array for function calls: [{"token":"..."}]
+    const QJsonDocument doc = QJsonDocument::fromJson(response);
+    QJsonObject obj;
+    if (doc.isArray() && !doc.array().isEmpty())
+        obj = doc.array().first().toObject();
+    else if (doc.isObject())
+        obj = doc.object();
+
+    const QString jwt = obj.value(QStringLiteral("token")).toString();
+    if (jwt.isEmpty()) {
+        emit authenticationFailed(QStringLiteral("Auth response missing 'token' field"));
+        return false;
+    }
+
+    m_token = jwt;
+    client->setAuthToken(m_token);
+#ifdef QT_DEBUG
+    qInfo() << "[AuthManager::loginViaGet] JWT obtained successfully";
 #endif
     emit authenticated();
     return true;
