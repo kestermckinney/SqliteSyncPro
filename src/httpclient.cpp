@@ -66,9 +66,12 @@ QByteArray HttpClient::executeRequest(QNetworkRequest &request,
                                        const QByteArray &verb,
                                        const QByteArray &body)
 {
-    m_lastStatusCode = 0;
+    m_lastStatusCode   = 0;
     m_lastError.clear();
     m_lastContentRange.clear();
+    m_lastBytesSent     = request.url().toString(QUrl::FullyEncoded).toUtf8().size()
+                        + body.size();
+    m_lastBytesReceived = 0;
 
 
     // qDebug().noquote() << QStringLiteral("[HttpClient] --> %1 %2")
@@ -95,8 +98,9 @@ QByteArray HttpClient::executeRequest(QNetworkRequest &request,
     loop.exec();
 
     const QByteArray responseBody = reply->readAll();
-    m_lastStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    m_lastContentRange = QString::fromLatin1(reply->rawHeader("Content-Range"));
+    m_lastStatusCode    = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    m_lastContentRange  = QString::fromLatin1(reply->rawHeader("Content-Range"));
+    m_lastBytesReceived = responseBody.size();
 
     // qDebug().noquote() << QStringLiteral("[HttpClient] <-- %1 (%2 bytes) %3")
     //                           .arg(m_lastStatusCode)

@@ -7,6 +7,7 @@
 #include "syncworker.h"
 #include "schemainspector.h"
 #include "syncapisettingsdialog.h"
+#include "syncstatswindow.h"
 
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -73,6 +74,11 @@ SqliteSyncPro::~SqliteSyncPro()
         m_persistentDb.close();
         m_persistentDb = QSqlDatabase();
         QSqlDatabase::removeDatabase(m_persistentConnName);
+    }
+
+    if (m_statsWindow) {
+        delete m_statsWindow;
+        m_statsWindow = nullptr;
     }
 }
 
@@ -220,6 +226,34 @@ bool SqliteSyncPro::showSettingsDialog(QWidget *parent)
 {
     SyncAPISettingsDialog dlg(this, parent);
     return dlg.exec() == QDialog::Accepted;
+}
+
+// ---------------------------------------------------------------------------
+// Stats window
+// ---------------------------------------------------------------------------
+
+void SqliteSyncPro::showStats(bool show)
+{
+    if (show) {
+        if (!m_statsWindow) {
+            m_statsWindow = new SyncStatsWindow;
+            connect(this,          &SqliteSyncPro::syncCompleted,
+                    m_statsWindow, &SyncStatsWindow::addDataPoint);
+            connect(m_statsWindow, &SyncStatsWindow::windowClosed,
+                    this,          &SqliteSyncPro::statsWindowClosed);
+        }
+        m_statsWindow->show();
+        m_statsWindow->raise();
+        m_statsWindow->activateWindow();
+    } else {
+        if (m_statsWindow)
+            m_statsWindow->hide();
+    }
+}
+
+bool SqliteSyncPro::isStatsVisible() const
+{
+    return m_statsWindow && m_statsWindow->isVisible();
 }
 
 // ---------------------------------------------------------------------------

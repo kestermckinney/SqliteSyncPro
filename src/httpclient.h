@@ -65,6 +65,8 @@ public:
     QString lastError()         const { return m_lastError;         }
     QString lastContentRange()  const { return m_lastContentRange;  }
     bool    wasSuccessful()     const { return m_lastStatusCode >= 200 && m_lastStatusCode < 300; }
+    qint64  lastBytesSent()     const { return m_lastBytesSent;     }
+    qint64  lastBytesReceived() const { return m_lastBytesReceived; }
 
 protected:
     void setLastStatusCode(int code)          { m_lastStatusCode = code; }
@@ -81,7 +83,9 @@ private:
     QString  m_baseUrl;
     QString  m_authToken;
     QString  m_apiKey;          // Supabase anon key; empty for self-hosted
-    int      m_lastStatusCode = 0;
+    int      m_lastStatusCode   = 0;
     QString  m_lastError;
     QString  m_lastContentRange;
+    qint64   m_lastBytesSent     = 0;
+    qint64   m_lastBytesReceived = 0;
 };

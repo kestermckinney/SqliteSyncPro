@@ -15,6 +15,8 @@ struct TableSyncResult
     bool    authError          = false; // true when HTTP status == 401 (JWT expired)
     bool    success            = true;
     QString errorMessage;
+    qint64  bytesPushed        = 0;     // bytes sent to server (upsert POST body)
+    qint64  bytesPulled        = 0;     // bytes received from server (pull GET response)
 };
 
 struct SyncResult
@@ -63,5 +65,19 @@ struct SyncResult
         for (const auto &r : tableResults)
             if (r.authError) return true;
         return false;
+    }
+
+    qint64 totalBytesPushed() const
+    {
+        qint64 n = 0;
+        for (const auto &r : tableResults) n += r.bytesPushed;
+        return n;
+    }
+
+    qint64 totalBytesPulled() const
+    {
+        qint64 n = 0;
+        for (const auto &r : tableResults) n += r.bytesPulled;
+        return n;
     }
 };
