@@ -206,18 +206,6 @@ int SqliteSyncPro::syncIntervalMs() const
     return m_syncIntervalMs;
 }
 
-void SqliteSyncPro::setDefaultBatchSize(int size)
-{
-    QMutexLocker lock(&m_mutex);
-    m_defaultBatchSize = size;
-}
-
-int SqliteSyncPro::defaultBatchSize() const
-{
-    QMutexLocker lock(&m_mutex);
-    return m_defaultBatchSize;
-}
-
 // ---------------------------------------------------------------------------
 // Settings dialog
 // ---------------------------------------------------------------------------
@@ -555,7 +543,6 @@ bool SqliteSyncPro::initialize()
         for (const QString &name : tableNames) {
             SyncTableConfig cfg;
             cfg.tableName = name;
-            cfg.batchSize = m_defaultBatchSize;
             m_tables.append(cfg);
         }
         m_dbOpen = true;
