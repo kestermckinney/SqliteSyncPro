@@ -9,6 +9,8 @@
 #include <QString>
 #include <QWaitCondition>
 
+#include <atomic>
+
 #include "syncconfig.h"
 #include "syncresult.h"
 
@@ -50,6 +52,13 @@ public slots:
     void requestStop();
 
     /**
+     * Receives the sync completeness percent (0–100) computed by SqliteSyncPro's
+     * checkSyncStatus machinery after each cycle.  Thread-safe; called via a
+     * queued connection from SqliteSyncPro::syncStatusUpdated.
+     */
+    void updateSyncPercent(int percent);
+
+    /**
      * Wake the backoff sleep early so the next sync cycle starts immediately.
      * Unlike requestStop(), this does not set the stop flag — the loop keeps running.
      * Call this when network connectivity is restored after a failure.
@@ -86,4 +95,9 @@ private:
     QMutex         m_stopMutex;
     QWaitCondition m_stopCondition;
     bool           m_stopRequested = false;
+
+    // Last sync completeness percent (0–100) fed back by SqliteSyncPro after
+    // each cycle via updateSyncPercent().  Starts at 0 so the first cycle
+    // always runs in catch-up mode.
+    std::atomic<int> m_lastSyncPercent{0};
 };

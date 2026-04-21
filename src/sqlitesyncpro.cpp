@@ -604,6 +604,17 @@ bool SqliteSyncPro::initialize()
     connect(m_syncWorker, &SyncLoopWorker::authenticationRequired,
             this,          &SqliteSyncPro::authenticationRequired);
 
+    // After each cycle: recompute sync completeness and feed the percent back
+    // to the worker so it can choose the right interval and batch size.
+    SyncLoopWorker *capturedForStatus = m_syncWorker;
+    connect(m_syncWorker, &SyncLoopWorker::syncCompleted,
+            this, [this, capturedForStatus](const SyncResult &result) {
+                checkSyncStatus(result);
+            });
+    connect(this, &SqliteSyncPro::syncStatusUpdated,
+            capturedForStatus, &SyncLoopWorker::updateSyncPercent,
+            Qt::QueuedConnection);
+
     // Capture the specific pointers created in THIS call to initialize().
     // If initialize() is called again before these lambdas fire, m_syncWorker
     // and m_syncThread will point to the NEW objects — capturing by value here

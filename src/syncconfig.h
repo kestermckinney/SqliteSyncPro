@@ -21,3 +21,13 @@ struct SyncTableConfig
     QString updatedDateColumn   = QStringLiteral("updateddate");
     QString syncDateColumn      = QStringLiteral("syncdate");
 };
+
+// Adaptive sync thresholds used by SyncLoopWorker.
+// While sync completeness is below kCatchUpThreshold the loop uses the catch-up
+// interval and batch size; once at or above the threshold it switches to
+// steady-state values.
+constexpr int    kCatchUpIntervalMs     = 15000;  // 15 s
+constexpr int    kCatchUpBatchSize      = 150;
+constexpr int    kSteadyStateIntervalMs = 30000;  // 30 s
+constexpr int    kSteadyStateBatchSize  = 15;
+constexpr double kCatchUpThreshold      = 0.90;   // 90 %

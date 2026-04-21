@@ -103,12 +103,25 @@ void SyncLoopWorker::run()
                     break;
             }
 
+            // Choose interval and batch size based on the last known sync percent
+            // fed back by SqliteSyncPro::checkSyncStatus after each completed cycle.
+            const int  syncPct   = m_lastSyncPercent.load();
+            const bool catchUp   = (syncPct < static_cast<int>(kCatchUpThreshold * 100));
+            const int    intervalMs = catchUp ? kCatchUpIntervalMs : kSteadyStateIntervalMs;
+            const int    batchSize  = catchUp ? kCatchUpBatchSize  : kSteadyStateBatchSize;
+
+            QList<SyncTableConfig> effectiveTables = m_tables;
+            for (auto &cfg : effectiveTables)
+                cfg.batchSize = batchSize;
+
 #ifdef QT_DEBUG
-            qDebug().noquote() << QStringLiteral("[SyncLoopWorker] Sync cycle starting");
+            qDebug().noquote() << QStringLiteral("[SyncLoopWorker] Sync cycle starting (%1% synced, %2 mode)")
+                                      .arg(syncPct)
+                                      .arg(catchUp ? QStringLiteral("catch-up") : QStringLiteral("steady-state"));
 #endif
 
             SyncResult combined;
-            for (const auto &cfg : m_tables) {
+            for (const auto &cfg : effectiveTables) {
                 const SyncResult tableSync = engine.synchronizeTable(cfg);
                 for (const auto &tr : tableSync.tableResults)
                     combined.tableResults.append(tr);
@@ -194,10 +207,10 @@ void SyncLoopWorker::run()
             }
 
             // Back off when the server is unreachable so we don't flood the log
-            // with repeated failures.  Use 5× the normal interval, capped at 5 minutes.
-            int waitMs = m_syncIntervalMs;
+            // with repeated failures.  Use 5× the adaptive interval, capped at 5 minutes.
+            int waitMs = intervalMs;
             if (combined.hasNetworkError()) {
-                waitMs = qMin(m_syncIntervalMs * 5, 300000);
+                waitMs = qMin(intervalMs * 5, 300000);
                 // Drop stale connections so the next cycle opens fresh ones after
                 // the network comes back rather than reusing dead HTTP/2 streams.
                 http.clearConnections();
@@ -234,4 +247,9 @@ void SyncLoopWorker::retryNow()
     // immediately starts a new sync cycle instead of waiting out the full interval.
     QMutexLocker locker(&m_stopMutex);
     m_stopCondition.wakeAll();
+}
+
+void SyncLoopWorker::updateSyncPercent(int percent)
+{
+    m_lastSyncPercent.store(qBound(0, percent, 100));
 }

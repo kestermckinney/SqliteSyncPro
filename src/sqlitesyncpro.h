@@ -111,8 +111,10 @@ public:
     QString postgresTableName() const;
 
     /**
-     * Interval between background sync rounds in milliseconds.
-     * Default: 5000 ms.  Must be set before initialize().
+     * Base interval used for network-error backoff (5× this value, capped at 5 min).
+     * The background loop determines its normal sleep from the adaptive constants
+     * (kCatchUpIntervalMs / kSteadyStateIntervalMs) and ignores this value except
+     * during backoff.  Default: 15000 ms.  Must be set before initialize().
      */
     void setSyncIntervalMs(int ms);
     int  syncIntervalMs() const;
@@ -344,7 +346,7 @@ private:
     QString m_encryptionPhrase;
     QString m_databasePath;
     QString m_postgresTableName  = QStringLiteral("sync_data");
-    int     m_syncIntervalMs     = 30000;
+    int     m_syncIntervalMs     = 15000;
 
     // Runtime state (set during authenticate/initialize)
     QString m_authToken;
