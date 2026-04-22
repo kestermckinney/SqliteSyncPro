@@ -88,6 +88,8 @@ QByteArray HttpClient::executeRequest(QNetworkRequest &request,
         reply = m_nam->post(request, body);
     } else if (verb == "PATCH") {
         reply = m_nam->sendCustomRequest(request, "PATCH", body);
+    } else if (verb == "DELETE") {
+        reply = m_nam->sendCustomRequest(request, "DELETE", QByteArray());
     } else {
         m_lastError = QStringLiteral("Unsupported HTTP verb: %1").arg(QString::fromLatin1(verb));
         return {};
@@ -151,6 +153,12 @@ QByteArray HttpClient::patch(const QString &endpoint, const QUrlQuery &query,
     if (!preferHeaders.isEmpty())
         req.setRawHeader("Prefer", preferHeaders.join(QLatin1Char(',')).toUtf8());
     return executeRequest(req, "PATCH", body);
+}
+
+QByteArray HttpClient::deleteRow(const QString &endpoint, const QUrlQuery &query)
+{
+    auto req = buildRequest(endpoint, query);
+    return executeRequest(req, "DELETE", {});
 }
 
 int HttpClient::countRows(const QString &endpoint, const QUrlQuery &query)

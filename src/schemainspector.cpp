@@ -18,10 +18,12 @@ QList<ColumnInfo> SchemaInspector::getColumns(const QString &tableName)
 
     // PRAGMA table_info does not support bound parameters; tableName is developer-supplied.
     QSqlQuery q(m_db);
-    if (!q.exec(QStringLiteral("PRAGMA table_info(\"%1\")").arg(tableName))) {
+    const QString pragmaSql = QStringLiteral("PRAGMA table_info(\"%1\")").arg(tableName);
+    if (!q.exec(pragmaSql)) {
 #ifdef QT_DEBUG
         qWarning() << "SchemaInspector::getColumns failed for" << tableName
                    << "-" << q.lastError().text();
+        qWarning().noquote() << "[SchemaInspector] Failed SQL:" << pragmaSql;
 #endif
         return columns;
     }
@@ -38,6 +40,39 @@ QList<ColumnInfo> SchemaInspector::getColumns(const QString &tableName)
     }
 
     return columns;
+}
+
+QList<UniqueIndex> SchemaInspector::getUniqueIndexes(const QString &tableName)
+{
+    QList<UniqueIndex> result;
+
+    QSqlQuery listQ(m_db);
+    if (!listQ.exec(QStringLiteral("PRAGMA index_list(\"%1\")").arg(tableName)))
+        return result;
+
+    while (listQ.next()) {
+        // index_list columns: seq, name, unique, origin, partial
+        if (!listQ.value(2).toBool())
+            continue;                          // not unique
+        if (listQ.value(3).toString() == QLatin1String("pk"))
+            continue;                          // primary key — skip
+
+        const QString indexName = listQ.value(1).toString();
+
+        QSqlQuery infoQ(m_db);
+        if (!infoQ.exec(QStringLiteral("PRAGMA index_info(\"%1\")").arg(indexName)))
+            continue;
+
+        UniqueIndex idx;
+        idx.name = indexName;
+        while (infoQ.next())
+            idx.columns << infoQ.value(2).toString();  // column name
+
+        if (!idx.columns.isEmpty())
+            result.append(idx);
+    }
+
+    return result;
 }
 
 bool SchemaInspector::hasRequiredColumns(const QString &tableName,

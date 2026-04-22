@@ -8,6 +8,12 @@
 #include <QSqlDatabase>
 #include <QSqlRecord>
 
+struct UniqueIndex
+{
+    QString     name;
+    QStringList columns;
+};
+
 struct ColumnInfo
 {
     int     cid          = 0;
@@ -27,7 +33,8 @@ class SchemaInspector
 public:
     explicit SchemaInspector(QSqlDatabase db);
 
-    QList<ColumnInfo> getColumns(const QString &tableName);
+    QList<ColumnInfo>  getColumns(const QString &tableName);
+    QList<UniqueIndex> getUniqueIndexes(const QString &tableName);
 
     bool hasRequiredColumns(const QString &tableName,
                             const QString &idCol,

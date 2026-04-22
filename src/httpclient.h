@@ -53,6 +53,7 @@ public:
     QByteArray patch(const QString &endpoint, const QUrlQuery &query,
                      const QByteArray &body,
                      const QStringList &preferHeaders = {QStringLiteral("return=minimal")});
+    QByteArray deleteRow(const QString &endpoint, const QUrlQuery &query);
 
     /**
      * Issue a HEAD request with "Prefer: count=exact" and parse the Content-Range

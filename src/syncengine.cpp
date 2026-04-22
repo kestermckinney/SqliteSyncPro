@@ -14,6 +14,21 @@
 #include <QUrlQuery>
 #include <QDebug>
 
+#ifdef QT_DEBUG
+static QString debugQuery(const QSqlQuery &q)
+{
+    QString sql = q.lastQuery();
+    const QVariantList vals = q.boundValues();
+    if (!vals.isEmpty()) {
+        QStringList parts;
+        for (int i = 0; i < vals.size(); ++i)
+            parts << QStringLiteral("%1=%2").arg(q.boundValueName(i), vals[i].toString());
+        sql += QStringLiteral(" [bindings: %1]").arg(parts.join(QStringLiteral(", ")));
+    }
+    return sql;
+}
+#endif
+
 SyncEngine::SyncEngine(QObject *parent)
     : QObject(parent)
 {
@@ -213,9 +228,13 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
         return 0;
 
     // --- Step 1: read all dirty records into memory while holding the write lock ---
+    qint64 currentLastPullTime = 0;
+    qint64 newLastPullTime     = 0;
     QList<PendingRecord> pending;
     {
         if (m_dbLock) m_dbLock->lockForWrite();
+        currentLastPullTime = getLastPullTime(config.tableName);
+        newLastPullTime     = currentLastPullTime;
 
         const QString selectSql = QStringLiteral(
             "SELECT * FROM \"%1\" WHERE \"%2\" IS NULL OR \"%2\" < \"%3\" LIMIT %4"
@@ -227,6 +246,9 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
             if (m_dbLock) m_dbLock->unlock();
             tableResult.errorMessage = QStringLiteral("Failed to query local records: %1")
                                            .arg(selectQ.lastError().text());
+#ifdef QT_DEBUG
+            qWarning().noquote() << "[SyncEngine] Failed SQL:" << selectSql;
+#endif
             return -1;
         }
 
@@ -304,16 +326,25 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
 
     // --- Step 3: categorise records and build batch upsert payload ---
     QJsonArray   upsertBatch;
-    QList<QString> toStampIds;   // uploaded records that need SYNCDATE stamped
-    QList<QString> equalIds;     // equal-timestamp records that just need SYNCDATE stamped
+    QList<QString> toStampIds;    // uploaded records that need SYNCDATE stamped
+    QList<QString> equalIds;      // equal-timestamp records that just need SYNCDATE stamped
+    QList<QString> conflictIds;   // conflict records stamped locally but NOT counted as pushed
 
     for (const PendingRecord &pr : pending) {
         const bool   onServer = serverTimestamps.contains(pr.id);
         const qint64 srvTs    = onServer ? serverTimestamps.value(pr.id) : -1;
 
         if (onServer && srvTs > pr.ts) {
-            // Server is newer → conflict; server wins; resolved in pull phase
+            // Server is newer → conflict; server wins.
+            // Stamp syncdate so this record leaves the dirty queue; without this
+            // stamp a batch of all-conflicts loops endlessly on the same records.
+            // If the server version predates the pull high-water mark it was missed
+            // by the normal pull path — roll back lastPullTime so the next pull
+            // cycle re-fetches it.
             ++tableResult.conflicts;
+            conflictIds << pr.id;
+            if (srvTs < currentLastPullTime)
+                newLastPullTime = qMin(newLastPullTime, srvTs - 1);
             continue;
         }
 
@@ -404,6 +435,7 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
         else {
             qWarning() << "Bulk SYNCDATE stamp failed for table" << config.tableName
                        << stampQ.lastError().text();
+            qWarning().noquote() << "[SyncEngine] Failed SQL:" << debugQuery(stampQ);
         }
 #endif
         if (m_dbLock) m_dbLock->unlock();
@@ -412,7 +444,89 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
             emit progress(config.tableName, pushed, -1);
     }
 
+    // --- Step 5b: stamp syncdate for conflict records (not counted as pushed) ---
+    // This removes them from the dirty queue so the same records do not cycle
+    // endlessly when an entire batch consists of conflicts.
+    if (!conflictIds.isEmpty()) {
+        QStringList placeholders;
+        placeholders.reserve(conflictIds.size());
+        for (int i = 0; i < conflictIds.size(); ++i)
+            placeholders << QStringLiteral(":cid%1").arg(i);
+
+        QSqlQuery conflictStampQ(m_db);
+        conflictStampQ.prepare(QStringLiteral(
+            "UPDATE \"%1\" SET \"%2\" = \"%3\" WHERE \"%4\" IN (%5)"
+        ).arg(config.tableName, config.syncDateColumn,
+              config.updatedDateColumn, config.idColumn,
+              placeholders.join(QStringLiteral(", "))));
+
+        for (int i = 0; i < conflictIds.size(); ++i)
+            conflictStampQ.bindValue(QStringLiteral(":cid%1").arg(i), conflictIds[i]);
+
+        if (m_dbLock) m_dbLock->lockForWrite();
+        conflictStampQ.exec();
+        if (m_dbLock) m_dbLock->unlock();
+    }
+
+    // If any conflict records had a server timestamp below the current pull
+    // high-water mark they were never fetched by the normal pull path.  Roll
+    // back lastPullTime so the next pull cycle re-fetches those records and
+    // overwrites the stale local data with the server's authoritative version.
+    if (newLastPullTime < currentLastPullTime) {
+        if (m_dbLock) m_dbLock->lockForWrite();
+        setLastPullTime(config.tableName, qMax(0LL, newLastPullTime));
+        if (m_dbLock) m_dbLock->unlock();
+#ifdef QT_DEBUG
+        qWarning().noquote()
+            << QStringLiteral("[SyncEngine] Push '%1': rolled back lastPullTime %2→%3 "
+                              "to re-fetch conflict record(s) missed by pull")
+                   .arg(config.tableName).arg(currentLastPullTime).arg(newLastPullTime);
+#endif
+    }
+
     return pushed;
+}
+
+// ---------------------------------------------------------------------------
+// Unique-key conflict resolution helper
+//
+// Iterates all non-PK unique indexes on the table and returns the local id of
+// the first row whose unique key values match those in rowData.  Called while
+// the write lock is held, so it may safely query the database.
+// ---------------------------------------------------------------------------
+
+QString SyncEngine::findConflictingLocalId(const SyncTableConfig        &config,
+                                            const QJsonObject             &rowData,
+                                            const QHash<QString, QString> &typeMap)
+{
+    const auto uniqueIndexes = m_schemaInspector->getUniqueIndexes(config.tableName);
+    for (const auto &idx : uniqueIndexes) {
+        bool allPresent = true;
+        for (const QString &col : idx.columns) {
+            if (!rowData.contains(col)) { allPresent = false; break; }
+        }
+        if (!allPresent)
+            continue;
+
+        QStringList whereClauses;
+        for (const QString &col : idx.columns)
+            whereClauses << QStringLiteral("\"%1\" = :%1").arg(col);
+
+        QSqlQuery q(m_db);
+        q.prepare(QStringLiteral("SELECT \"%1\" FROM \"%2\" WHERE %3")
+                      .arg(config.idColumn, config.tableName,
+                           whereClauses.join(QStringLiteral(" AND "))));
+
+        for (const QString &col : idx.columns) {
+            q.bindValue(QStringLiteral(":%1").arg(col),
+                        SchemaInspector::jsonValueToVariant(
+                            rowData.value(col), typeMap.value(col)));
+        }
+
+        if (q.exec() && q.next())
+            return q.value(0).toString();
+    }
+    return {};
 }
 
 // ---------------------------------------------------------------------------
@@ -585,6 +699,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
 #ifdef QT_DEBUG
             qWarning() << "Existence check failed for" << recordId
                        << existQ.lastError().text();
+            qWarning().noquote() << "[SyncEngine] Failed SQL:" << debugQuery(existQ);
 #endif
             continue;
         }
@@ -635,6 +750,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
 #ifdef QT_DEBUG
                 qWarning() << "UPDATE failed for" << recordId
                            << updateQ.lastError().text();
+                qWarning().noquote() << "[SyncEngine] Failed SQL:" << debugQuery(updateQ);
 #endif
             }
 
@@ -674,11 +790,69 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                 emit progress(config.tableName, pulled, -1);
                 emit rowChanged(config.tableName, recordId);
             } else {
-                if (m_dbLock) m_dbLock->unlock();
+                const QString dbErr = insertQ.lastError().databaseText();
+                const bool isUniqueViolation =
+                    dbErr.contains(QLatin1String("UNIQUE constraint failed"),
+                                   Qt::CaseInsensitive);
+
+                if (isUniqueViolation) {
+                    // Another client inserted the same logical record under a different id.
+                    // Rename the local id to match the server's canonical id so conflict
+                    // resolution can proceed normally on the next sync cycle.
+                    const QString conflictingId =
+                        findConflictingLocalId(config, rowData, typeMap);
+
+                    if (!conflictingId.isEmpty()) {
+                        QSqlQuery fixQ(m_db);
+                        fixQ.prepare(QStringLiteral(
+                            "UPDATE \"%1\" SET \"%2\" = :newId, \"%3\" = NULL"
+                            " WHERE \"%2\" = :oldId"
+                        ).arg(config.tableName, config.idColumn, config.syncDateColumn));
+                        fixQ.bindValue(QStringLiteral(":newId"), recordId);
+                        fixQ.bindValue(QStringLiteral(":oldId"), conflictingId);
+                        fixQ.exec();
+
+                        if (m_dbLock) m_dbLock->unlock();
+
+                        // Delete the orphaned remote record that used the old local id.
+                        QUrlQuery delQuery;
+                        delQuery.addQueryItem(
+                            QStringLiteral("tablename"),
+                            QStringLiteral("eq.%1").arg(config.tableName));
+                        delQuery.addQueryItem(
+                            QStringLiteral("id"),
+                            QStringLiteral("eq.%1").arg(conflictingId));
+                        m_httpClient->deleteRow(m_postgresTableName, delQuery);
+                        tableResult.bytesPushed += m_httpClient->lastBytesSent();
+                        tableResult.bytesPulled += m_httpClient->lastBytesReceived();
 #ifdef QT_DEBUG
-                qWarning() << "INSERT failed for" << recordId
-                           << insertQ.lastError().text();
+                        if (!m_httpClient->wasSuccessful()) {
+                            qWarning().noquote()
+                                << QStringLiteral("[SyncEngine] Could not delete orphaned"
+                                                  " remote id=%1 (table '%2'): %3")
+                                       .arg(conflictingId, config.tableName,
+                                            m_httpClient->lastError());
+                        }
+                        qWarning().noquote()
+                            << QStringLiteral("[SyncEngine] Unique key conflict resolved:"
+                                              " local id %1 → %2 (table '%3')")
+                                   .arg(conflictingId, recordId, config.tableName);
 #endif
+                    } else {
+                        if (m_dbLock) m_dbLock->unlock();
+#ifdef QT_DEBUG
+                        qWarning() << "INSERT unique conflict but no matching local row found"
+                                   << "for" << recordId << "in" << config.tableName;
+#endif
+                    }
+                } else {
+                    if (m_dbLock) m_dbLock->unlock();
+#ifdef QT_DEBUG
+                    qWarning() << "INSERT failed for" << recordId
+                               << insertQ.lastError().text();
+                    qWarning().noquote() << "[SyncEngine] Failed SQL:" << debugQuery(insertQ);
+#endif
+                }
             }
         }
     }

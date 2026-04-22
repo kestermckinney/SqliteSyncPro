@@ -2,6 +2,8 @@
 #pragma once
 
 #include <QByteArray>
+#include <QHash>
+#include <QJsonObject>
 #include <QObject>
 #include <QReadWriteLock>
 #include <QSqlDatabase>
@@ -88,8 +90,11 @@ signals:
     void rowChanged(const QString &tableName, const QString &id);
 
 private:
-    int  pushLocalChanges(const SyncTableConfig &config, TableSyncResult &result);
-    int  pullServerChanges(const SyncTableConfig &config, TableSyncResult &result);
+    int     pushLocalChanges(const SyncTableConfig &config, TableSyncResult &result);
+    int     pullServerChanges(const SyncTableConfig &config, TableSyncResult &result);
+    QString findConflictingLocalId(const SyncTableConfig &config,
+                                   const QJsonObject &rowData,
+                                   const QHash<QString, QString> &typeMap);
 
     qint64 getLastPullTime(const QString &tableName);
     void   setLastPullTime(const QString &tableName, qint64 utcMs);
