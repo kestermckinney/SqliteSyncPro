@@ -114,14 +114,14 @@ QByteArray HttpClient::executeRequest(QNetworkRequest &request,
 
     if (reply->error() != QNetworkReply::NoError) {
         m_lastError = reply->errorString();
-#if 1
+#if 0
         qWarning().noquote() << QStringLiteral("[HttpClient]     network error: %1").arg(m_lastError);
 #endif
         if (!responseBody.isEmpty())
             m_lastError += QStringLiteral(": ") + QString::fromUtf8(responseBody);
     }
 
-#if 1
+#if 0
     if (m_lastStatusCode == 0)
         qWarning().noquote()
             << "[HttpClient]     (status 0 — server unreachable or connection refused)";

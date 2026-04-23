@@ -14,7 +14,7 @@
 #include <QUrlQuery>
 #include <QDebug>
 
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
 static QString debugQuery(const QSqlQuery &q)
 {
     QString sql = q.lastQuery();
@@ -246,7 +246,7 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
             if (m_dbLock) m_dbLock->unlock();
             tableResult.errorMessage = QStringLiteral("Failed to query local records: %1")
                                            .arg(selectQ.lastError().text());
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
             qWarning().noquote() << "[SyncEngine] Failed SQL:" << selectSql;
 #endif
             return -1;
@@ -293,18 +293,18 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
                                        .arg(m_httpClient->lastError());
         if (m_httpClient->lastStatusCode() == 0) {
             tableResult.networkError = true;
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
             qWarning().noquote() << QStringLiteral("[SyncEngine] Network error on batch push check ('%1'): server unreachable (status 0)")
                                         .arg(config.tableName);
 #endif
         } else if (m_httpClient->lastStatusCode() == 401) {
             tableResult.authError = true;
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
             qWarning().noquote() << QStringLiteral("[SyncEngine] 401 Unauthorized on batch push check ('%1'): JWT may have expired")
                                         .arg(config.tableName);
 #endif
         } else {
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
             qWarning().noquote() << QStringLiteral("[SyncEngine] Batch push check failed ('%1'): HTTP %2 — %3")
                                         .arg(config.tableName)
                                         .arg(m_httpClient->lastStatusCode())
@@ -360,7 +360,7 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
             const QByteArray plain = QJsonDocument(pr.rowJson).toJson(QJsonDocument::Compact);
             const QString enc = RowEncryption::encrypt(plain, m_encryptionKey);
             if (enc.isEmpty()) {
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
                 qWarning() << "Encryption failed for record" << pr.id << "– skipping";
 #endif
                 continue;
@@ -397,7 +397,7 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
                 tableResult.networkError = true;
             else if (m_httpClient->lastStatusCode() == 401)
                 tableResult.authError = true;
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
             qWarning().noquote() << QStringLiteral("[SyncEngine] Batch upsert failed ('%1'): HTTP %2 — %3")
                                         .arg(config.tableName)
                                         .arg(m_httpClient->lastStatusCode())
@@ -431,7 +431,7 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
         if (stampQ.exec()) {
             pushed = stampQ.numRowsAffected();
         }
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
         else {
             qWarning() << "Bulk SYNCDATE stamp failed for table" << config.tableName
                        << stampQ.lastError().text();
@@ -476,7 +476,7 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
         if (m_dbLock) m_dbLock->lockForWrite();
         setLastPullTime(config.tableName, qMax(0LL, newLastPullTime));
         if (m_dbLock) m_dbLock->unlock();
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
         qWarning().noquote()
             << QStringLiteral("[SyncEngine] Push '%1': rolled back lastPullTime %2→%3 "
                               "to re-fetch conflict record(s) missed by pull")
@@ -577,18 +577,18 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                                        .arg(m_httpClient->lastError());
         if (m_httpClient->lastStatusCode() == 0) {
             tableResult.networkError = true;
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
             qWarning().noquote() << QStringLiteral("[SyncEngine] Network error pulling '%1': server unreachable (status 0)")
                                         .arg(config.tableName);
 #endif
         } else if (m_httpClient->lastStatusCode() == 401) {
             tableResult.authError = true;
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
             qWarning().noquote() << QStringLiteral("[SyncEngine] 401 Unauthorized pulling '%1': JWT may have expired")
                                         .arg(config.tableName);
 #endif
         } else {
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
             qWarning().noquote() << QStringLiteral("[SyncEngine] Pull failed for '%1': HTTP %2 — %3")
                                         .arg(config.tableName)
                                         .arg(m_httpClient->lastStatusCode())
@@ -655,7 +655,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
             if (!m_encryptionKey.isEmpty()) {
                 const QByteArray plain = RowEncryption::decrypt(encoded, m_encryptionKey);
                 if (plain.isEmpty()) {
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
                     qWarning() << "Pull: decryption failed for ID" << recordId;
 #endif
                     ++tableResult.decryptionFailures;
@@ -665,7 +665,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                 if (rowDoc.isObject())
                     rowData = rowDoc.object();
             } else {
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
                 qWarning() << "Pull: received encrypted JSONROWDATA but no key set for ID" << recordId;
 #endif
                 ++tableResult.decryptionFailures;
@@ -676,7 +676,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
         }
 
         if (rowData.isEmpty()) {
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
             qWarning() << "Pull: empty JSONROWDATA for ID" << recordId;
 #endif
             continue;
@@ -696,7 +696,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
 
         if (!existQ.exec()) {
             if (m_dbLock) m_dbLock->unlock();
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
             qWarning() << "Existence check failed for" << recordId
                        << existQ.lastError().text();
             qWarning().noquote() << "[SyncEngine] Failed SQL:" << debugQuery(existQ);
@@ -747,7 +747,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                 emit rowChanged(config.tableName, recordId);
             } else {
                 if (m_dbLock) m_dbLock->unlock();
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
                 qWarning() << "UPDATE failed for" << recordId
                            << updateQ.lastError().text();
                 qWarning().noquote() << "[SyncEngine] Failed SQL:" << debugQuery(updateQ);
@@ -825,7 +825,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                         m_httpClient->deleteRow(m_postgresTableName, delQuery);
                         tableResult.bytesPushed += m_httpClient->lastBytesSent();
                         tableResult.bytesPulled += m_httpClient->lastBytesReceived();
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
                         if (!m_httpClient->wasSuccessful()) {
                             qWarning().noquote()
                                 << QStringLiteral("[SyncEngine] Could not delete orphaned"
@@ -840,14 +840,14 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
 #endif
                     } else {
                         if (m_dbLock) m_dbLock->unlock();
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
                         qWarning() << "INSERT unique conflict but no matching local row found"
                                    << "for" << recordId << "in" << config.tableName;
 #endif
                     }
                 } else {
                     if (m_dbLock) m_dbLock->unlock();
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
                     qWarning() << "INSERT failed for" << recordId
                                << insertQ.lastError().text();
                     qWarning().noquote() << "[SyncEngine] Failed SQL:" << debugQuery(insertQ);

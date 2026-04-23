@@ -50,7 +50,7 @@ bool AuthManager::login(HttpClient   *client,
         if (!client->apiKey().isEmpty())
             req.setRawHeader("apikey", client->apiKey().toUtf8());
 
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
         qInfo() << "[AuthManager::login] POST" << authEndpoint;
 #endif
 
@@ -69,7 +69,7 @@ bool AuthManager::login(HttpClient   *client,
         statusCode = client->lastStatusCode();
     }
 
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
     qInfo() << "[AuthManager::login] status=" << statusCode;
 #endif
 
@@ -77,19 +77,19 @@ bool AuthManager::login(HttpClient   *client,
         const QString reason = QStringLiteral("HTTP %1: %2")
                                    .arg(statusCode)
                                    .arg(QString::fromUtf8(response));
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
         qWarning() << "[AuthManager::login]" << reason;
 #endif
         // Status 0 means the server was unreachable (network down / connection refused).
         // Emit networkError rather than authenticationFailed so callers can distinguish
         // a connectivity problem from bad credentials.
         if (statusCode == 0) {
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
             qWarning() << "[AuthManager::login] Network error — server unreachable (status 0)";
 #endif
             emit networkError(reason);
         } else {
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
             qWarning() << "[AuthManager::login] Authentication failed — HTTP" << statusCode;
 #endif
             emit authenticationFailed(reason);
@@ -100,7 +100,7 @@ bool AuthManager::login(HttpClient   *client,
     const QJsonDocument doc = QJsonDocument::fromJson(response);
     if (!doc.isObject()) {
         const QString reason = QStringLiteral("Auth response is not JSON");
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
         qWarning() << "[AuthManager::login]" << reason;
 #endif
         emit authenticationFailed(reason);
@@ -117,7 +117,7 @@ bool AuthManager::login(HttpClient   *client,
     if (jwt.isEmpty()) {
         const QString reason = QStringLiteral(
             "Auth response missing token field ('access_token' or 'token')");
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
         qWarning() << "[AuthManager::login]" << reason;
 #endif
         emit authenticationFailed(reason);
@@ -129,7 +129,7 @@ bool AuthManager::login(HttpClient   *client,
     // For Supabase: every PostgREST request also needs apikey: <anon_key>.
     // The apiKey was already set on the client by the caller; setAuthToken()
     // above does not clear it, so subsequent sync calls carry both headers.
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
     qInfo() << "[AuthManager::login] JWT obtained successfully";
 #endif
     emit authenticated();
@@ -147,14 +147,14 @@ bool AuthManager::loginViaGet(HttpClient    *client,
     query.addQueryItem(QStringLiteral("username"), email);
     query.addQueryItem(QStringLiteral("password"), password);
 
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
     qInfo() << "[AuthManager::loginViaGet] GET rpc/rpc_login";
 #endif
 
     const QByteArray response = client->get(QStringLiteral("rpc/rpc_login"), query);
     const int statusCode = client->lastStatusCode();
 
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
     qInfo() << "[AuthManager::loginViaGet] status=" << statusCode;
 #endif
 
@@ -185,7 +185,7 @@ bool AuthManager::loginViaGet(HttpClient    *client,
 
     m_token = jwt;
     client->setAuthToken(m_token);
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
     qInfo() << "[AuthManager::loginViaGet] JWT obtained successfully";
 #endif
     emit authenticated();

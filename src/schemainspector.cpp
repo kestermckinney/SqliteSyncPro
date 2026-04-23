@@ -20,7 +20,7 @@ QList<ColumnInfo> SchemaInspector::getColumns(const QString &tableName)
     QSqlQuery q(m_db);
     const QString pragmaSql = QStringLiteral("PRAGMA table_info(\"%1\")").arg(tableName);
     if (!q.exec(pragmaSql)) {
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
         qWarning() << "SchemaInspector::getColumns failed for" << tableName
                    << "-" << q.lastError().text();
         qWarning().noquote() << "[SchemaInspector] Failed SQL:" << pragmaSql;

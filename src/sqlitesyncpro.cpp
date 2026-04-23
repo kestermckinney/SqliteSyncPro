@@ -477,11 +477,11 @@ QStringList SqliteSyncPro::discoverSyncTables(const QString &dbPath)
                                              QStringLiteral("syncdate"),
                                              errMsg)) {
                 syncTables << tableName;
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
                 qDebug() << "[SqliteSyncPro] Will sync table:" << tableName;
 #endif
             } else {
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
                 qDebug() << "[SqliteSyncPro] Skipping table" << tableName << "-" << errMsg;
 #endif
             }
@@ -1081,7 +1081,7 @@ bool SqliteSyncPro::syncAll()
     for (const SyncTableConfig &cfg : tables) {
         QSqlQuery q(m_persistentDb);
         q.prepare(QStringLiteral("UPDATE \"%1\" SET syncdate = NULL").arg(cfg.tableName));
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
         if (!q.exec())
             qWarning().noquote()
                 << QStringLiteral("[SqliteSyncPro] syncAll: failed to reset syncdate for '%1': %2")
@@ -1097,7 +1097,7 @@ bool SqliteSyncPro::syncAll()
 
     m_persistentDb.commit();
 
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
     qDebug().noquote() << QStringLiteral("[SqliteSyncPro] syncAll: %1 table(s) marked for full resync")
                               .arg(tables.size());
 #endif

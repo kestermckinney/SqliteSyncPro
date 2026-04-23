@@ -85,7 +85,7 @@ void SyncLoopWorker::run()
         connect(&engine, &SyncEngine::progress,    this, &SyncLoopWorker::progress);
         connect(&engine, &SyncEngine::rowChanged,  this, &SyncLoopWorker::rowChanged);
 
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
         qDebug().noquote() << QStringLiteral("[SyncLoopWorker] Starting sync loop for %1 table(s): %2")
                                   .arg(m_tables.size())
                                   .arg([this]() {
@@ -114,7 +114,7 @@ void SyncLoopWorker::run()
             for (auto &cfg : effectiveTables)
                 cfg.batchSize = batchSize;
 
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
             qDebug().noquote() << QStringLiteral("[SyncLoopWorker] Sync cycle starting (%1% synced, %2 mode)")
                                       .arg(syncPct)
                                       .arg(catchUp ? QStringLiteral("catch-up") : QStringLiteral("steady-state"));
@@ -131,7 +131,7 @@ void SyncLoopWorker::run()
                 }
             }
 
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
             qDebug().noquote() << QStringLiteral("[SyncLoopWorker] Sync cycle complete: pulled=%1, pushed=%2, conflicts=%3, success=%4%5")
                                       .arg(combined.totalPulled())
                                       .arg(combined.totalPushed())
@@ -140,7 +140,7 @@ void SyncLoopWorker::run()
                                       .arg(combined.success ? QString() : QStringLiteral(", error: ") + combined.errorMessage);
 #endif
 
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
             {
                 qint64 pendingPush = 0;
                 QReadLocker lock(m_dbLock);
@@ -167,7 +167,7 @@ void SyncLoopWorker::run()
             // If reauth succeeds, update the token and retry immediately.
             // If reauth fails, emit authenticationRequired and stop.
             if (combined.hasAuthError()) {
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
                 qWarning().noquote() << QStringLiteral("[SyncLoopWorker] JWT expired; attempting reauthentication");
 #endif
 
@@ -193,12 +193,12 @@ void SyncLoopWorker::run()
                 if (auth.login(&authHttp, authEndpoint, m_email, m_password)) {
                     m_authToken = auth.token();
                     http.setAuthToken(m_authToken);
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
                     qDebug().noquote() << QStringLiteral("[SyncLoopWorker] Reauthentication succeeded; resuming sync");
 #endif
                     continue;  // retry cycle immediately without sleeping
                 } else {
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
                     qWarning().noquote() << QStringLiteral("[SyncLoopWorker] Reauthentication failed; stopping sync loop");
 #endif
                     emit authenticationRequired();
@@ -214,7 +214,7 @@ void SyncLoopWorker::run()
                 // Drop stale connections so the next cycle opens fresh ones after
                 // the network comes back rather than reusing dead HTTP/2 streams.
                 http.clearConnections();
-#ifdef QT_DEBUG
+#if 0 // QT_DEBUG
                 qWarning().noquote()
                     << QStringLiteral("[SyncLoopWorker] Network unreachable; backing off %1 ms before retry")
                            .arg(waitMs);
