@@ -156,12 +156,16 @@ if(WIN32)
     set(_PG_DLLS libpq.dll libpgtypes.dll libecpg.dll libecpg_compat.dll)
 
     foreach(_dll ${_PG_DLLS})
-        add_custom_command(TARGET ProjectNotesRemoteHost POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<IF:$<CONFIG:Debug>,${_VCPKG_BIN_DIR}/debug/bin/${_dll},${_VCPKG_BIN_DIR}/bin/${_dll}>"
-                "$<TARGET_FILE_DIR:ProjectNotesRemoteHost>/${_dll}"
-            COMMENT "Copying ${_dll} for $<CONFIG>"
-        )
+        set(_release_dll "${_VCPKG_BIN_DIR}/bin/${_dll}")
+        set(_debug_dll "${_VCPKG_BIN_DIR}/debug/bin/${_dll}")
+        if(EXISTS "${_release_dll}" OR EXISTS "${_debug_dll}")
+            add_custom_command(TARGET ProjectNotesRemoteHost POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<IF:$<CONFIG:Debug>,${_debug_dll},${_release_dll}>"
+                    "$<TARGET_FILE_DIR:ProjectNotesRemoteHost>/${_dll}"
+                COMMENT "Copying ${_dll} for $<CONFIG>"
+            )
+        endif()
     endforeach()
 endif()
 
