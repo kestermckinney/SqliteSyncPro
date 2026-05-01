@@ -1,5 +1,5 @@
 find_package(OpenSSL REQUIRED)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Charts)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Network Sql Widgets Charts)
 
 add_library(SqliteSyncProLib STATIC
     syncconfig.h
