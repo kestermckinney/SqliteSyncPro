@@ -380,7 +380,6 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
 
     const QByteArray checkResp = m_httpClient->get(m_postgresTableName, checkQuery);
     tableResult.bytesPulled += m_httpClient->lastBytesReceived();
-    tableResult.bytesPushed += m_httpClient->lastBytesSent();
 
     if (!m_httpClient->wasSuccessful()) {
         tableResult.errorMessage = QStringLiteral("Server batch check failed: %1")
@@ -499,7 +498,6 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
                            {QStringLiteral("resolution=merge-duplicates"),
                             QStringLiteral("return=minimal")});
         tableResult.bytesPushed += m_httpClient->lastBytesSent();
-        tableResult.bytesPulled += m_httpClient->lastBytesReceived();
         if (!m_httpClient->wasSuccessful()) {
             tableResult.errorMessage = QStringLiteral("Batch upsert failed: %1")
                                            .arg(m_httpClient->lastError());
@@ -704,7 +702,6 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
 
     const QByteArray response = m_httpClient->get(m_postgresTableName, query);
     tableResult.bytesPulled += m_httpClient->lastBytesReceived();
-    tableResult.bytesPushed += m_httpClient->lastBytesSent();
     if (!m_httpClient->wasSuccessful()) {
         tableResult.errorMessage = QStringLiteral("Pull request failed: %1")
                                        .arg(m_httpClient->lastError());
@@ -971,8 +968,6 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                             QStringLiteral("id"),
                             QStringLiteral("eq.%1").arg(postgrestFilterValue(conflictingId)));
                         m_httpClient->deleteRow(m_postgresTableName, delQuery);
-                        tableResult.bytesPushed += m_httpClient->lastBytesSent();
-                        tableResult.bytesPulled += m_httpClient->lastBytesReceived();
 #if 0 // QT_DEBUG
                         if (!m_httpClient->wasSuccessful()) {
                             qWarning().noquote()
