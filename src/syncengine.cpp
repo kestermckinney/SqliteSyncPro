@@ -232,6 +232,11 @@ SyncResult SyncEngine::synchronizeTable(const SyncTableConfig &config)
         return result;
     }
 
+#if 0 // QT_DEBUG
+    qDebug().noquote() << QStringLiteral("[SyncEngine] Synchronize '%1': pull complete (pulled=%2). Starting push...")
+                              .arg(config.tableName).arg(pulled);
+#endif
+
     const int pushed = pushLocalChanges(config, tableResult);
     if (pushed < 0) {
         tableResult.success = false;
@@ -275,6 +280,12 @@ SyncResult SyncEngine::synchronizeTable(const SyncTableConfig &config)
 
 int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult &tableResult)
 {
+#if 0 // QT_DEBUG
+    qDebug().noquote() << QStringLiteral("[SyncEngine] Push '%1': entered push phase. syncDateColumn=%2, updatedDateColumn=%3, batchSize=%4")
+                              .arg(config.tableName, config.syncDateColumn, config.updatedDateColumn)
+                              .arg(config.batchSize);
+#endif
+
     struct PendingRecord {
         QString     id;
         qint64      ts;
@@ -295,6 +306,11 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
         ).arg(config.tableName, config.syncDateColumn, config.updatedDateColumn)
          .arg(config.batchSize);
 
+#if 0 // QT_DEBUG
+        qDebug().noquote() << QStringLiteral("[SyncEngine] Push '%1': pending-records query: %2")
+                                  .arg(config.tableName, selectSql);
+#endif
+
         QSqlQuery selectQ(m_db);
         if (!selectQ.exec(selectSql)) {
             if (m_dbLock) m_dbLock->unlock();
@@ -314,14 +330,29 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
             pr.rowJson = m_schemaInspector->recordToJson(
                 record, columns,
                 {config.syncDateColumn, config.idColumn, config.updatedDateColumn});
-            pending.append(pr);
-        }
+             pending.append(pr);
+         }
 
-        if (m_dbLock) m_dbLock->unlock();
+#if 0 // QT_DEBUG
+        qDebug().noquote() << QStringLiteral("[SyncEngine] Push '%1': pending-records query returned %2 row(s)")
+                                  .arg(config.tableName).arg(pending.size());
+#endif
+
+         if (m_dbLock) m_dbLock->unlock();
     }
 
-    if (pending.isEmpty())
+#if 0 // QT_DEBUG
+    qDebug().noquote() << QStringLiteral("[SyncEngine] Push '%1': %2 pending record(s) found after query")
+                              .arg(config.tableName).arg(pending.size());
+#endif
+
+    if (pending.isEmpty()) {
+#if 0 // QT_DEBUG
+        qDebug().noquote() << QStringLiteral("[SyncEngine] Push '%1': no pending records, exiting push phase")
+                              .arg(config.tableName);
+#endif
         return 0;
+    }
 
     // Write lock is now released; HTTP calls follow with no lock held.
 
@@ -387,6 +418,11 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
             obj.value(QStringLiteral("updateddate")).toVariant().toLongLong());
     }
 
+#if 0 // QT_DEBUG
+    qDebug().noquote() << QStringLiteral("[SyncEngine] Push '%1': server returned %2 existing record(s)")
+                              .arg(config.tableName).arg(serverTimestamps.size());
+#endif
+
     // --- Step 3: categorise records and build batch upsert payload ---
     QJsonArray   upsertBatch;
     QList<QString> toStampIds;    // uploaded records that need SYNCDATE stamped
@@ -406,12 +442,20 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
             // cursor cannot skip past it.
             ++tableResult.conflicts;
             conflictIds << pr.id;
+#if 0 // QT_DEBUG
+            qDebug().noquote() << QStringLiteral("[SyncEngine] Push '%1': conflict id=%2 (server ts=%3 > local ts=%4) — server wins")
+                                      .arg(config.tableName, pr.id).arg(srvTs).arg(pr.ts);
+#endif
             continue;
         }
 
         if (onServer && srvTs == pr.ts) {
             // Equal timestamps → already in sync; just stamp SYNCDATE locally
             equalIds << pr.id;
+#if 0 // QT_DEBUG
+            qDebug().noquote() << QStringLiteral("[SyncEngine] Push '%1': equal timestamp id=%2 (ts=%3) — marking in sync")
+                                      .arg(config.tableName, pr.id).arg(pr.ts);
+#endif
             continue;
         }
 
@@ -441,6 +485,11 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
 
         upsertBatch.append(payload);
         toStampIds << pr.id;
+
+#if 0 // QT_DEBUG
+        qDebug().noquote() << QStringLiteral("[SyncEngine] Push '%1': upsert id=%2 (local ts=%3, server ts=%4)")
+                                  .arg(config.tableName, pr.id).arg(pr.ts).arg(srvTs);
+#endif
     }
 
     // --- Step 4: ONE batch upsert POST for all candidates ---
@@ -470,7 +519,7 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
 
     // --- Step 5: bulk UPDATE syncdate for all stamped records under one write lock ---
     const QList<QString> allToStamp = toStampIds + equalIds;
-    int pushed = 0;
+    int pushed = toStampIds.size();
 
     if (!allToStamp.isEmpty()) {
         QStringList placeholders;
@@ -490,7 +539,7 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
 
         if (m_dbLock) m_dbLock->lockForWrite();
         if (stampQ.exec()) {
-            pushed = stampQ.numRowsAffected();
+            // pushed count already set to toStampIds.size() above
         }
 #if 0 // QT_DEBUG
         else {
@@ -532,6 +581,19 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
     // No watermark rollback needed: the pull cursor is keyed off the server-
     // assigned server_modified_at field, which is monotonic across all clients
     // regardless of clock skew or backdated updateddate values.
+
+#if 0 // QT_DEBUG
+    qDebug().noquote() << QStringLiteral("[SyncEngine] Push '%1' summary: pushed=%2, conflicts=%3, equalTs=%4, upsertBatch=%5")
+                              .arg(config.tableName).arg(pushed)
+                              .arg(conflictIds.size()).arg(equalIds.size())
+                              .arg(upsertBatch.size());
+    if (!conflictIds.isEmpty()) {
+        qWarning().noquote() << QStringLiteral("[SyncEngine] Push '%1': %2 conflict(s) (server wins): %4")
+                                     .arg(config.tableName).arg(conflictIds.size())
+                                     .arg(conflictIds.mid(0, 10).join(QStringLiteral(", ")))
+                                     << (conflictIds.size() > 10 ? QStringLiteral("… (+%1 more)").arg(conflictIds.size() - 10) : QString());
+    }
+#endif
 
     return pushed;
 }
