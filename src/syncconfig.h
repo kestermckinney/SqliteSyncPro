@@ -29,5 +29,5 @@ struct SyncTableConfig
 constexpr int    kCatchUpIntervalMs     = 15000;  // 15 s
 constexpr int    kCatchUpBatchSize      = 150;
 constexpr int    kSteadyStateIntervalMs = 30000;  // 30 s
-constexpr int    kSteadyStateBatchSize  = 15;
+constexpr int    kSteadyStateBatchSize  = 50;
 constexpr double kCatchUpThreshold      = 0.90;   // 90 %

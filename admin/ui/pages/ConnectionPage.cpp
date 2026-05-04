@@ -11,6 +11,7 @@
 #include <QFrame>
 #include <QPushButton>
 #include <QIntValidator>
+#include <QMessageBox>
 
 ConnectionPage::ConnectionPage(AdminController *controller, QWidget *parent)
     : QWidget(parent)
@@ -255,6 +256,8 @@ ConnectionPage::ConnectionPage(AdminController *controller, QWidget *parent)
             this, &ConnectionPage::onConnectionTestResult);
     connect(m_controller, &AdminController::alreadySetup,
             this, &ConnectionPage::onAlreadySetup);
+    connect(m_controller, &AdminController::upgradeFinished,
+            this, &ConnectionPage::onUpgradeFinished);
 }
 
 void ConnectionPage::onModeChanged(int index)
@@ -274,6 +277,63 @@ void ConnectionPage::onTestClicked()
 void ConnectionPage::onNextClicked()
 {
     m_controller->saveConnectionSettings();
+
+    if (!maybePromptForUpgrade())
+        return;
+    // If an upgrade is in flight, onUpgradeFinished() will continue the flow.
+    if (m_nextButton->text() == QStringLiteral("Upgrading…"))
+        return;
+
+    m_controller->checkIfAlreadySetup();
+}
+
+bool ConnectionPage::maybePromptForUpgrade()
+{
+    if (!m_controller->needsUpgrade())
+        return true;
+
+    const auto choice = QMessageBox::warning(
+        this,
+        QStringLiteral("Database upgrade required"),
+        QStringLiteral(
+            "This database was set up with an older version of Project Notes "
+            "and must be upgraded to work with Project Notes 5.0.1.\n\n"
+            "The upgrade adds a server-managed timestamp to the sync_data "
+            "table so changes are no longer missed when records carry "
+            "backdated dates. It runs in a single transaction — if anything "
+            "fails the database is left untouched.\n\n"
+            "Upgrade the database now?"),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::Yes);
+
+    if (choice != QMessageBox::Yes) {
+        showStatus(true, QStringLiteral(
+            "Cannot continue — Project Notes 5.0.1 requires the database upgrade. "
+            "Click Next again to retry."));
+        return false;
+    }
+
+    m_nextButton->setText(QStringLiteral("Upgrading…"));
+    m_nextButton->setEnabled(false);
+    m_testButton->setEnabled(false);
+    hideStatus();
+
+    m_controller->startUpgrade();
+    return true;
+}
+
+void ConnectionPage::onUpgradeFinished(bool success, const QString &message)
+{
+    m_nextButton->setText(QStringLiteral("Next →"));
+    m_nextButton->setEnabled(true);
+    m_testButton->setEnabled(true);
+
+    if (!success) {
+        showStatus(true, QStringLiteral("Database upgrade failed: %1").arg(message));
+        return;
+    }
+
+    showStatus(false, QStringLiteral("Database upgraded to Project Notes 5.0.1."));
     m_controller->checkIfAlreadySetup();
 }
 

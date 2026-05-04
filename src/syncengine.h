@@ -96,8 +96,28 @@ private:
                                    const QJsonObject &rowData,
                                    const QHash<QString, QString> &typeMap);
 
+    /**
+     * Composite cursor (updateddate, id) used to paginate the pull query.
+     * Tracking both the timestamp AND the last-seen id makes pull immune to
+     * boundary stalls when many rows share an updateddate value.  An empty id
+     * means "no in-batch position recorded yet" and the query falls back to
+     * gte semantics.
+     */
+    struct PullCursor {
+        qint64  ts = 0;
+        QString id;
+    };
+    PullCursor getLastPullCursor(const QString &tableName);
+    void       setLastPullCursor(const QString &tableName, qint64 ts, const QString &id);
+
     qint64 getLastPullTime(const QString &tableName);
-    void   setLastPullTime(const QString &tableName, qint64 utcMs);
+    /**
+     * Sets the timestamp portion of the pull cursor and clears the id portion.
+     * Used by the push path to roll back the high-water mark when a conflict
+     * record was missed; clearing the id ensures the next pull re-scans from
+     * the new (lower) timestamp without skipping any boundary rows.
+     */
+    void setLastPullTime(const QString &tableName, qint64 utcMs);
 
     void ensureSyncMetaTable();
 

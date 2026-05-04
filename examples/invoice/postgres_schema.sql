@@ -102,16 +102,35 @@ REVOKE ALL ON auth_users FROM PUBLIC, pnanon, pnapp_user;
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS sync_data (
-    userid      TEXT   NOT NULL,
-    tablename   TEXT   NOT NULL,
-    id          TEXT   NOT NULL,
-    updateddate BIGINT NOT NULL,
-    jsonrowdata JSONB  NOT NULL,
+    userid             TEXT   NOT NULL,
+    tablename          TEXT   NOT NULL,
+    id                 TEXT   NOT NULL,
+    updateddate        BIGINT NOT NULL,
+    server_modified_at BIGINT NOT NULL,
+    jsonrowdata        JSONB  NOT NULL,
     PRIMARY KEY (userid, tablename, id)
 );
 
+-- server_modified_at is server-assigned on every INSERT/UPDATE so the pull
+-- cursor is monotonic across all clients regardless of clock skew or
+-- backdated `updateddate` values.
+CREATE OR REPLACE FUNCTION sync_data_stamp_server_time()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.server_modified_at := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$ BEGIN
+    CREATE TRIGGER sync_data_stamp_server_time_trg
+        BEFORE INSERT OR UPDATE ON sync_data
+        FOR EACH ROW EXECUTE FUNCTION sync_data_stamp_server_time();
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_sync_data_pull
-    ON sync_data (userid, tablename, updateddate);
+    ON sync_data (userid, tablename, server_modified_at);
 
 ALTER TABLE sync_data ENABLE ROW LEVEL SECURITY;
 

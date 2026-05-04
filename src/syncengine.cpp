@@ -29,6 +29,23 @@ static QString debugQuery(const QSqlQuery &q)
 }
 #endif
 
+// Helper: wrap a value in double quotes if it contains characters that are
+// special in postgREST filter syntax.  This forces postgREST to treat
+// the value as a literal string.
+static QString postgrestFilterValue(const QString &value)
+{
+    // postgREST special characters in filter syntax
+    if (value.contains(QLatin1Char('{')) || value.contains(QLatin1Char('}')) ||
+        value.contains(QLatin1Char('(')) || value.contains(QLatin1Char(')')) ||
+        value.contains(QLatin1Char(',')) || value.contains(QLatin1Char('=')) ||
+        value.contains(QLatin1Char('>')) || value.contains(QLatin1Char('<')) ||
+        value.contains(QLatin1Char('"')))
+    {
+        return QStringLiteral("\"%1\"").arg(value);
+    }
+    return value;
+}
+
 SyncEngine::SyncEngine(QObject *parent)
     : QObject(parent)
 {
@@ -82,32 +99,73 @@ void SyncEngine::ensureSyncMetaTable()
     q.exec(QStringLiteral(
         "CREATE TABLE IF NOT EXISTS _sync_meta ("
         "  table_name     TEXT    PRIMARY KEY,"
-        "  last_pull_time INTEGER NOT NULL DEFAULT 0"
+        "  last_pull_time INTEGER NOT NULL DEFAULT 0,"
+        "  last_pull_id   TEXT    NOT NULL DEFAULT ''"
         ")"
     ));
+
+    // Migrate older databases that predate the composite cursor.
+    QSqlQuery infoQ(m_db);
+    if (infoQ.exec(QStringLiteral("PRAGMA table_info(_sync_meta)"))) {
+        bool hasLastPullId = false;
+        while (infoQ.next()) {
+            if (infoQ.value(1).toString() == QLatin1String("last_pull_id")) {
+                hasLastPullId = true;
+                break;
+            }
+        }
+        if (!hasLastPullId) {
+            QSqlQuery alterQ(m_db);
+            alterQ.exec(QStringLiteral(
+                "ALTER TABLE _sync_meta ADD COLUMN last_pull_id TEXT NOT NULL DEFAULT ''"
+            ));
+        }
+    }
+}
+
+SyncEngine::PullCursor SyncEngine::getLastPullCursor(const QString &tableName)
+{
+    PullCursor cursor;
+    QSqlQuery q(m_db);
+    q.prepare(QStringLiteral(
+        "SELECT last_pull_time, last_pull_id FROM _sync_meta WHERE table_name = :name"
+    ));
+    q.bindValue(QStringLiteral(":name"), tableName);
+    if (q.exec() && q.next()) {
+        cursor.ts = q.value(0).toLongLong();
+        cursor.id = q.value(1).toString();
+    }
+    return cursor;
+}
+
+void SyncEngine::setLastPullCursor(const QString &tableName, qint64 ts, const QString &id)
+{
+    QSqlQuery q(m_db);
+    q.prepare(QStringLiteral(
+        "INSERT OR REPLACE INTO _sync_meta (table_name, last_pull_time, last_pull_id) "
+        "VALUES (:name, :ts, :id)"
+    ));
+    q.bindValue(QStringLiteral(":name"), tableName);
+    q.bindValue(QStringLiteral(":ts"),   ts);
+    q.bindValue(QStringLiteral(":id"),   id);
+    if (!q.exec()) {
+#if 0 // QT_DEBUG
+        qWarning() << "Failed to set last pull cursor for table" << tableName
+                   << ":" << q.lastError().text();
+        qWarning().noquote() << "[SyncEngine] Failed SQL:" << debugQuery(q);
+#endif
+    }
 }
 
 qint64 SyncEngine::getLastPullTime(const QString &tableName)
 {
-    QSqlQuery q(m_db);
-    q.prepare(QStringLiteral(
-        "SELECT last_pull_time FROM _sync_meta WHERE table_name = :name"
-    ));
-    q.bindValue(QStringLiteral(":name"), tableName);
-    if (q.exec() && q.next())
-        return q.value(0).toLongLong();
-    return 0;
+    return getLastPullCursor(tableName).ts;
 }
 
 void SyncEngine::setLastPullTime(const QString &tableName, qint64 utcMs)
 {
-    QSqlQuery q(m_db);
-    q.prepare(QStringLiteral(
-        "INSERT OR REPLACE INTO _sync_meta (table_name, last_pull_time) VALUES (:name, :ts)"
-    ));
-    q.bindValue(QStringLiteral(":name"), tableName);
-    q.bindValue(QStringLiteral(":ts"),   utcMs);
-    q.exec();
+    // Clearing the id is intentional — see header doc.
+    setLastPullCursor(tableName, utcMs, QString());
 }
 
 // ---------------------------------------------------------------------------
@@ -187,9 +245,9 @@ SyncResult SyncEngine::synchronizeTable(const SyncTableConfig &config)
     // Resetting to 0 caused an infinite loop: while the push phase keeps
     // finding records to send, the pull phase is forced to restart from the
     // beginning every cycle and can never advance past the first batch.
-    // The pull query uses gte (>=) on updateddate, so it already re-fetches
-    // the high-water-mark boundary record on each cycle — no additional
-    // safety margin is needed.
+    // The pull cursor on (server_modified_at, id) already re-fetches the
+    // high-water-mark boundary row on each cycle when its id matches lastId,
+    // so no additional safety margin is needed.
     // if (pushed > 0) {
     //     qDebug().noquote() << QStringLiteral("[SyncEngine] '%1': pushed %2 record(s)")
     //                               .arg(config.tableName).arg(pushed);
@@ -228,13 +286,9 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
         return 0;
 
     // --- Step 1: read all dirty records into memory while holding the write lock ---
-    qint64 currentLastPullTime = 0;
-    qint64 newLastPullTime     = 0;
     QList<PendingRecord> pending;
     {
         if (m_dbLock) m_dbLock->lockForWrite();
-        currentLastPullTime = getLastPullTime(config.tableName);
-        newLastPullTime     = currentLastPullTime;
 
         const QString selectSql = QStringLiteral(
             "SELECT * FROM \"%1\" WHERE \"%2\" IS NULL OR \"%2\" < \"%3\" LIMIT %4"
@@ -280,8 +334,17 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
     QUrlQuery checkQuery;
     checkQuery.addQueryItem(QStringLiteral("tablename"),
                             QStringLiteral("eq.%1").arg(config.tableName));
-    checkQuery.addQueryItem(QStringLiteral("id"),
-                            QStringLiteral("in.(%1)").arg(idList.join(QLatin1Char(','))));
+
+    // For the id list with possible {} characters
+    QStringList safeIdList;
+    for (const auto &id : std::as_const(idList))
+        safeIdList << postgrestFilterValue(id);
+    QString idListStr = safeIdList.join(QLatin1Char(','));
+
+    // Properly encode the entire value for PostgREST
+    QString encodedIdList = QStringLiteral("in.(%1)").arg(idListStr);
+    checkQuery.addQueryItem(QStringLiteral("id"), encodedIdList);
+
     checkQuery.addQueryItem(QStringLiteral("select"), QStringLiteral("id,updateddate"));
 
     const QByteArray checkResp = m_httpClient->get(m_postgresTableName, checkQuery);
@@ -338,13 +401,11 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
             // Server is newer → conflict; server wins.
             // Stamp syncdate so this record leaves the dirty queue; without this
             // stamp a batch of all-conflicts loops endlessly on the same records.
-            // If the server version predates the pull high-water mark it was missed
-            // by the normal pull path — roll back lastPullTime so the next pull
-            // cycle re-fetches it.
+            // The server's authoritative version will be picked up by the next
+            // pull cycle on its own — server_modified_at is monotonic so the
+            // cursor cannot skip past it.
             ++tableResult.conflicts;
             conflictIds << pr.id;
-            if (srvTs < currentLastPullTime)
-                newLastPullTime = qMin(newLastPullTime, srvTs - 1);
             continue;
         }
 
@@ -468,21 +529,9 @@ int SyncEngine::pushLocalChanges(const SyncTableConfig &config, TableSyncResult 
         if (m_dbLock) m_dbLock->unlock();
     }
 
-    // If any conflict records had a server timestamp below the current pull
-    // high-water mark they were never fetched by the normal pull path.  Roll
-    // back lastPullTime so the next pull cycle re-fetches those records and
-    // overwrites the stale local data with the server's authoritative version.
-    if (newLastPullTime < currentLastPullTime) {
-        if (m_dbLock) m_dbLock->lockForWrite();
-        setLastPullTime(config.tableName, qMax(0LL, newLastPullTime));
-        if (m_dbLock) m_dbLock->unlock();
-#if 0 // QT_DEBUG
-        qWarning().noquote()
-            << QStringLiteral("[SyncEngine] Push '%1': rolled back lastPullTime %2→%3 "
-                              "to re-fetch conflict record(s) missed by pull")
-                   .arg(config.tableName).arg(currentLastPullTime).arg(newLastPullTime);
-#endif
-    }
+    // No watermark rollback needed: the pull cursor is keyed off the server-
+    // assigned server_modified_at field, which is monotonic across all clients
+    // regardless of clock skew or backdated updateddate values.
 
     return pushed;
 }
@@ -551,22 +600,44 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
     for (const auto &col : columns)
         typeMap.insert(col.name, col.type);
 
-    const qint64 lastPull = getLastPullTime(config.tableName);
+    const PullCursor cursor   = getLastPullCursor(config.tableName);
+    const qint64     lastPull = cursor.ts;
+    const QString    lastId   = cursor.id;
 
-    // qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': lastPullTime=%2, batchSize=%3")
-    //                           .arg(config.tableName).arg(lastPull).arg(config.batchSize);
+#if 0 // QT_DEBUG
+    qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': cursor=(%2, '%3'), batchSize=%4")
+                              .arg(config.tableName).arg(lastPull).arg(lastId)
+                              .arg(config.batchSize);
+#endif
 
     // --- Step 1: HTTP GET with no lock held ---
+    //
+    // Composite cursor pagination on (server_modified_at, id):
+    //   ORDER BY server_modified_at ASC, id ASC
+    //   WHERE (server_modified_at > lastPull)
+    //      OR (server_modified_at == lastPull AND id > lastId)
+    //
+    // server_modified_at is populated by a Postgres trigger on every
+    // INSERT/UPDATE so the cursor is monotonic across all clients regardless
+    // of clock skew or backdated `updateddate` values. The (ts, id) composite
+    // prevents stalls when many rows share the same server_modified_at value;
+    // when lastId is empty we fall back to gte semantics so no rows are
+    // missed at the boundary.
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("tablename"),
                        QStringLiteral("eq.%1").arg(config.tableName));
-    // Use gte (>=) so records whose updateddate equals last_pull_time are not
-    // permanently missed.  Records already present locally are harmlessly
-    // skipped by the serverTs <= localTs check below.
-    query.addQueryItem(QStringLiteral("updateddate"),
-                       QStringLiteral("gte.%1").arg(lastPull));
+    if (!lastId.isEmpty()) {
+        const QString safeId = postgrestFilterValue(lastId);
+        query.addQueryItem(
+            QStringLiteral("or"),
+            QStringLiteral("(server_modified_at.gt.%1,and(server_modified_at.eq.%1,id.gt.%2))")
+                .arg(lastPull).arg(safeId));
+    } else {
+        query.addQueryItem(QStringLiteral("server_modified_at"),
+                           QStringLiteral("gte.%1").arg(lastPull));
+    }
     query.addQueryItem(QStringLiteral("order"),
-                       QStringLiteral("updateddate.asc"));
+                       QStringLiteral("server_modified_at.asc,id.asc"));
     query.addQueryItem(QStringLiteral("limit"), QString::number(config.batchSize));
 
     const QByteArray response = m_httpClient->get(m_postgresTableName, query);
@@ -605,37 +676,34 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
     }
 
     const QJsonArray serverRows = doc.array();
-    int    pulled      = 0;
-    qint64 maxPullTime = lastPull;
 
-    // qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': server returned %2 row(s)%3")
-    //                           .arg(config.tableName)
-    //                           .arg(serverRows.count())
-    //                           .arg(serverRows.count() == config.batchSize
-    //                                    ? QStringLiteral(" (batch limit hit — more may remain)")
-    //                                    : QString());
+#if 0 // QT_DEBUG
+    if (!serverRows.isEmpty()) {
+        const QJsonObject firstRow = serverRows.first().toObject();
+        qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': first row raw JSON:\n%2")
+                                  .arg(config.tableName,
+                                       QString::fromUtf8(QJsonDocument(firstRow).toJson(QJsonDocument::Indented)));
+    }
+#endif
+    int         pulled       = 0;
+    int         successCount = 0;
+    qint64      maxSuccessSmta = lastPull; // tracks server_modified_at, drives cursor
+    QString     maxSuccessId   = lastId;  // tracks id corresponding to maxSuccessSmta
+    qint64      maxBatchSmta   = lastPull; // highest server_modified_at in batch
+    QStringList failedIds;
 
-    // if (serverRows.isEmpty())
-    //     qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': raw response: %2")
-    //                               .arg(config.tableName,
-    //                                    QString::fromUtf8(response.left(500)));
+    auto markFailure = [&failedIds](const QString &id) {
+        failedIds << id;
+    };
 
-    // if (!serverRows.isEmpty()) {
-    //     const qint64 firstTs = serverRows.first().toObject()
-    //                                .value(QStringLiteral("updateddate")).toVariant().toLongLong();
-    //     const qint64 lastTs  = serverRows.last().toObject()
-    //                                .value(QStringLiteral("updateddate")).toVariant().toLongLong();
-    //     if (firstTs == 0 || lastTs == 0)
-    //         qWarning().noquote() << QStringLiteral("[SyncEngine] Pull '%1': WARNING — updateddate parsed as 0; "
-    //                                                "the column may be a non-integer type on the server "
-    //                                                "(raw first value: '%2')")
-    //                                     .arg(config.tableName,
-    //                                          serverRows.first().toObject()
-    //                                              .value(QStringLiteral("updateddate")).toVariant().toString());
-    //     else
-    //         qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': server ts range [%2 .. %3]")
-    //                                   .arg(config.tableName).arg(firstTs).arg(lastTs);
-    // }
+#if 0 // QT_DEBUG
+    qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': server returned %2 row(s)%3")
+                              .arg(config.tableName)
+                              .arg(serverRows.count())
+                              .arg(serverRows.count() == config.batchSize
+                                       ? QStringLiteral(" (batch limit hit — more may remain)")
+                                       : QString());
+#endif
 
     // --- Step 2: upsert each record under a per-record write lock ---
     for (const QJsonValue &val : serverRows) {
@@ -643,7 +711,14 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
             continue;
 
         const QJsonObject serverRow = val.toObject();
+        // serverTs is the user's business modification date — used to stamp
+        // the local row's updateddate/syncdate columns and to compare against
+        // any local copy of the row.
         const qint64      serverTs  = serverRow.value(QStringLiteral("updateddate"))
+                                          .toVariant().toLongLong();
+        // serverSmta is the server-assigned monotonic stamp — used only to
+        // advance the pull cursor.
+        const qint64      serverSmta = serverRow.value(QStringLiteral("server_modified_at"))
                                           .toVariant().toLongLong();
         const QString     recordId  = serverRow.value(QStringLiteral("id")).toString();
 
@@ -675,15 +750,21 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
             rowData = jrdVal.toObject();
         }
 
+        if (serverSmta > maxBatchSmta)
+            maxBatchSmta = serverSmta;
+
         if (rowData.isEmpty()) {
 #if 0 // QT_DEBUG
             qWarning() << "Pull: empty JSONROWDATA for ID" << recordId;
 #endif
+            markFailure(recordId);
             continue;
         }
 
-        if (serverTs > maxPullTime)
-            maxPullTime = serverTs;
+        // Tracks whether this record was successfully reconciled with the local
+        // database.  Only successful records advance the pull high-water mark;
+        // failures hold maxSuccessSmta back so the record is retried on the next cycle.
+        bool ok = false;
 
         if (m_dbLock) m_dbLock->lockForWrite();
 
@@ -701,6 +782,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                        << existQ.lastError().text();
             qWarning().noquote() << "[SyncEngine] Failed SQL:" << debugQuery(existQ);
 #endif
+            markFailure(recordId);
             continue;
         }
 
@@ -712,46 +794,49 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                 if (m_dbLock) m_dbLock->unlock();
                 if (localTs > serverTs) {
                     ++tableResult.conflicts;
-                    // qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': skipping id=%2 (local ts=%3 > server ts=%4)")
-                    //                           .arg(config.tableName, recordId).arg(localTs).arg(serverTs);
-                }
-                continue;
-            }
-
-            // Build dynamic UPDATE from JSONROWDATA keys; add UPDATEDDATE and SYNCDATE explicitly
-            QStringList setClauses;
-            for (auto it = rowData.constBegin(); it != rowData.constEnd(); ++it)
-                setClauses << QStringLiteral("\"%1\" = :%1").arg(it.key());
-            setClauses << QStringLiteral("\"%1\" = :__updateddate").arg(config.updatedDateColumn);
-            setClauses << QStringLiteral("\"%1\" = :__syncdate").arg(config.syncDateColumn);
-
-            QSqlQuery updateQ(m_db);
-            updateQ.prepare(QStringLiteral("UPDATE \"%1\" SET %2 WHERE \"%3\" = :__id")
-                                .arg(config.tableName,
-                                     setClauses.join(QStringLiteral(", ")),
-                                     config.idColumn));
-
-            for (auto it = rowData.constBegin(); it != rowData.constEnd(); ++it) {
-                updateQ.bindValue(QStringLiteral(":%1").arg(it.key()),
-                                  SchemaInspector::jsonValueToVariant(
-                                      it.value(), typeMap.value(it.key())));
-            }
-            updateQ.bindValue(QStringLiteral(":__updateddate"), serverTs);
-            updateQ.bindValue(QStringLiteral(":__syncdate"), serverTs);
-            updateQ.bindValue(QStringLiteral(":__id"), recordId);
-
-            if (updateQ.exec()) {
-                ++pulled;
-                if (m_dbLock) m_dbLock->unlock();
-                emit progress(config.tableName, pulled, -1);
-                emit rowChanged(config.tableName, recordId);
-            } else {
-                if (m_dbLock) m_dbLock->unlock();
 #if 0 // QT_DEBUG
-                qWarning() << "UPDATE failed for" << recordId
-                           << updateQ.lastError().text();
-                qWarning().noquote() << "[SyncEngine] Failed SQL:" << debugQuery(updateQ);
+                    qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1': skipping id=%2 (local ts=%3 > server ts=%4)")
+                                              .arg(config.tableName, recordId).arg(localTs).arg(serverTs);
 #endif
+                }
+                ok = true;  // local is already at or ahead of server — safe to advance past
+            } else {
+                // Build dynamic UPDATE from JSONROWDATA keys; add UPDATEDDATE and SYNCDATE explicitly
+                QStringList setClauses;
+                for (auto it = rowData.constBegin(); it != rowData.constEnd(); ++it)
+                    setClauses << QStringLiteral("\"%1\" = :%1").arg(it.key());
+                setClauses << QStringLiteral("\"%1\" = :__updateddate").arg(config.updatedDateColumn);
+                setClauses << QStringLiteral("\"%1\" = :__syncdate").arg(config.syncDateColumn);
+
+                QSqlQuery updateQ(m_db);
+                updateQ.prepare(QStringLiteral("UPDATE \"%1\" SET %2 WHERE \"%3\" = :__id")
+                                    .arg(config.tableName,
+                                         setClauses.join(QStringLiteral(", ")),
+                                         config.idColumn));
+
+                for (auto it = rowData.constBegin(); it != rowData.constEnd(); ++it) {
+                    updateQ.bindValue(QStringLiteral(":%1").arg(it.key()),
+                                      SchemaInspector::jsonValueToVariant(
+                                          it.value(), typeMap.value(it.key())));
+                }
+                updateQ.bindValue(QStringLiteral(":__updateddate"), serverTs);
+                updateQ.bindValue(QStringLiteral(":__syncdate"), serverTs);
+                updateQ.bindValue(QStringLiteral(":__id"), recordId);
+
+                if (updateQ.exec()) {
+                    ++pulled;
+                    ok = true;
+                    if (m_dbLock) m_dbLock->unlock();
+                    emit progress(config.tableName, pulled, -1);
+                    emit rowChanged(config.tableName, recordId);
+                } else {
+                    if (m_dbLock) m_dbLock->unlock();
+#if 0 // QT_DEBUG
+                    qWarning() << "UPDATE failed for" << recordId
+                               << updateQ.lastError().text();
+                    qWarning().noquote() << "[SyncEngine] Failed SQL:" << debugQuery(updateQ);
+#endif
+                }
             }
 
         } else {
@@ -786,6 +871,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
 
             if (insertQ.exec()) {
                 ++pulled;
+                ok = true;
                 if (m_dbLock) m_dbLock->unlock();
                 emit progress(config.tableName, pulled, -1);
                 emit rowChanged(config.tableName, recordId);
@@ -821,7 +907,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                             QStringLiteral("eq.%1").arg(config.tableName));
                         delQuery.addQueryItem(
                             QStringLiteral("id"),
-                            QStringLiteral("eq.%1").arg(conflictingId));
+                            QStringLiteral("eq.%1").arg(postgrestFilterValue(conflictingId)));
                         m_httpClient->deleteRow(m_postgresTableName, delQuery);
                         tableResult.bytesPushed += m_httpClient->lastBytesSent();
                         tableResult.bytesPulled += m_httpClient->lastBytesReceived();
@@ -838,6 +924,7 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                                               " local id %1 → %2 (table '%3')")
                                    .arg(conflictingId, recordId, config.tableName);
 #endif
+                        ok = true;  // conflict resolved — local row will sync on next push
                     } else {
                         if (m_dbLock) m_dbLock->unlock();
 #if 0 // QT_DEBUG
@@ -855,17 +942,91 @@ int SyncEngine::pullServerChanges(const SyncTableConfig &config, TableSyncResult
                 }
             }
         }
+
+        if (ok) {
+            ++successCount;
+            // Trust the server's ORDER BY (server_modified_at.asc, id.asc).
+            // Computing a "max" with C++ byte compare would disagree with
+            // Postgres collation when ids mix formats (e.g. "{uuid}" vs
+            // "159…"), causing the cursor to never advance past a brace-
+            // wrapped value when later numeric-id rows are byte-less but
+            // collation-greater.
+            maxSuccessSmta = serverSmta;
+            maxSuccessId   = recordId;
+        } else {
+            markFailure(recordId);
+        }
     }
 
-    // --- Step 3: persist the high-water mark under a brief write lock ---
-    if (maxPullTime > lastPull) {
+    // --- Step 3: advance the cursor to the max successful (smta, id) ---
+    //
+    // The cursor advances to the highest (server_modified_at, id) pair among
+    // successfully processed rows, stored in maxSuccessSmta / maxSuccessId.
+    // Using the successful set (not just the last row) prevents a failed row
+    // at the end of the batch from blocking cursor progress.
+    //
+    // Two failure regimes:
+    //   (a) Some records succeeded → advance the cursor to the highest
+    //       successful (smta, id). Failed records are skipped (with warnings)
+    //       so a single bad row never stalls progress.
+    //   (b) No records succeeded but failures occurred → likely a systemic
+    //       issue (transient SQL error, schema mismatch on every row, etc.).
+    //       Leave the cursor unchanged so the next cycle retries the same batch.
+    const bool fullBatchFailure = (successCount == 0 && !failedIds.isEmpty());
+    const bool anySuccess = (successCount > 0);
+    const bool shouldAdvance = !serverRows.isEmpty() && anySuccess && !fullBatchFailure;
+
+    qint64  newCursorSmta = lastPull;
+    QString newCursorId   = lastId;
+    bool    cursorAdvances = false;
+
+    if (shouldAdvance) {
+        newCursorSmta  = maxSuccessSmta;
+        newCursorId    = maxSuccessId;
+        cursorAdvances = true;
+    }
+
+#if 0 // QT_DEBUG
+    qDebug().noquote()
+        << QStringLiteral("[SyncEngine] Pull '%1' summary: pulled=%2, success=%3, failed=%4, "
+                          "maxSuccessSmta=%5, maxSuccessId=%6, maxBatchSmta=%7, oldCursor=(%8,'%9'), newCursor=(%10,'%11')%12")
+               .arg(config.tableName).arg(pulled).arg(successCount).arg(failedIds.size())
+               .arg(maxSuccessSmta).arg(maxSuccessId).arg(maxBatchSmta)
+               .arg(lastPull).arg(lastId)
+               .arg(newCursorSmta).arg(newCursorId)
+               .arg(cursorAdvances ? QString() : QStringLiteral(" (HELD)"));
+#endif
+
+#if 0 // QT_DEBUG
+    if (!failedIds.isEmpty()) {
+        const QString sample = failedIds.mid(0, 10).join(QStringLiteral(", "));
+        const QString more = failedIds.size() > 10
+                                 ? QStringLiteral(", … (+%1 more)").arg(failedIds.size() - 10)
+                                 : QString();
+        if (fullBatchFailure) {
+            qWarning().noquote()
+                << QStringLiteral("[SyncEngine] Pull '%1': %2 record(s) failed and NONE succeeded; "
+                                  "cursor held at (%3,'%4') (will retry next cycle). IDs: %5%6")
+                       .arg(config.tableName).arg(failedIds.size())
+                       .arg(newCursorSmta).arg(newCursorId)
+                       .arg(sample, more);
+        } else {
+            qWarning().noquote()
+                << QStringLiteral("[SyncEngine] Pull '%1': %2 record(s) skipped due to apply errors; "
+                                  "cursor advanced to (%3,'%4') to keep sync progressing. "
+                                  "Investigate per-record errors above. IDs: %5%6")
+                       .arg(config.tableName).arg(failedIds.size())
+                       .arg(newCursorSmta).arg(newCursorId)
+                       .arg(sample, more);
+        }
+    }
+#endif
+
+    if (cursorAdvances) {
         if (m_dbLock) m_dbLock->lockForWrite();
-        setLastPullTime(config.tableName, maxPullTime);
+        setLastPullCursor(config.tableName, newCursorSmta, newCursorId);
         if (m_dbLock) m_dbLock->unlock();
     }
-
-    // qDebug().noquote() << QStringLiteral("[SyncEngine] Pull '%1' done: applied=%2, conflicts=%3, newPullTime=%4")
-    //                           .arg(config.tableName).arg(pulled).arg(tableResult.conflicts).arg(maxPullTime);
 
     return pulled;
 }

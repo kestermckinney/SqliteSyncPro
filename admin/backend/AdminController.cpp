@@ -2,6 +2,7 @@
 #include "AdminController.h"
 #include "SetupWorker.h"
 #include "TeardownWorker.h"
+#include "UpgradeWorker.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -133,6 +134,10 @@ AdminController::~AdminController()
     if (m_teardownThread) {
         m_teardownThread->quit();
         m_teardownThread->wait();
+    }
+    if (m_upgradeThread) {
+        m_upgradeThread->quit();
+        m_upgradeThread->wait();
     }
 }
 
@@ -577,8 +582,8 @@ void AdminController::cancelSetup()
 
 int AdminController::teardownTotalSteps() const
 {
-    // 6 functions + 2 tables + (4 roles if self-hosted)
-    return isSupabaseMode() ? 8 : 12;
+    // 6 legacy fns + sync_data_stamp_server_time + 2 tables + (4 roles if self-hosted)
+    return isSupabaseMode() ? 9 : 13;
 }
 
 void AdminController::startTeardown()
@@ -633,6 +638,92 @@ void AdminController::startTeardown()
         Q_ARG(QString, m_superuser),
         Q_ARG(QString, m_superPass),
         Q_ARG(bool,    isSupabaseMode()));
+}
+
+// ---------------------------------------------------------------------------
+// Q_INVOKABLE – schema upgrade for Project Notes 5.0.1
+// ---------------------------------------------------------------------------
+
+bool AdminController::needsUpgrade()
+{
+    QSqlDatabase db = openAdminConnection();
+    if (!db.open()) {
+#ifdef QT_DEBUG
+        qWarning() << "[AdminController::needsUpgrade] OPEN FAILED:" << db.lastError().text();
+#endif
+        closeAdminConnection(db);
+        return false;
+    }
+
+    // Table absent → fresh install, the Setup wizard will create it correctly.
+    QSqlQuery q(db);
+    bool hasTable = false;
+    if (q.exec(QStringLiteral(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_name = 'sync_data'")) && q.next()) {
+        hasTable = true;
+    }
+    if (!hasTable) {
+        closeAdminConnection(db);
+        return false;
+    }
+
+    // Table present → upgrade required iff server_modified_at is missing.
+    bool hasColumn = false;
+    if (q.exec(QStringLiteral(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = 'public' "
+            "  AND table_name   = 'sync_data' "
+            "  AND column_name  = 'server_modified_at'")) && q.next()) {
+        hasColumn = true;
+    }
+
+    closeAdminConnection(db);
+#ifdef QT_DEBUG
+    qDebug() << "[AdminController::needsUpgrade] hasTable=true hasColumn=" << hasColumn;
+#endif
+    return !hasColumn;
+}
+
+void AdminController::startUpgrade()
+{
+    if (m_upgradeThread) {
+        m_upgradeThread->quit();
+        m_upgradeThread->wait();
+        m_upgradeThread->deleteLater();
+        m_upgradeThread = nullptr;
+        m_upgradeWorker = nullptr;
+    }
+
+    m_upgradeWorker = new UpgradeWorker();
+    m_upgradeThread = new QThread(this);
+    m_upgradeWorker->moveToThread(m_upgradeThread);
+
+    connect(m_upgradeWorker, &UpgradeWorker::stepCompleted,
+            this,            &AdminController::upgradeStepCompleted);
+
+    connect(m_upgradeWorker, &UpgradeWorker::finished, this,
+            [this](bool success, const QString &message) {
+#ifdef QT_DEBUG
+                qDebug() << "[AdminController::startUpgrade] finished success=" << success;
+#endif
+                emit upgradeFinished(success, message);
+                m_upgradeThread->quit();
+            });
+
+    connect(m_upgradeThread, &QThread::finished,
+            m_upgradeWorker, &QObject::deleteLater);
+    m_upgradeThread->start();
+
+#ifdef QT_DEBUG
+    qDebug() << "[AdminController::startUpgrade] invoking runUpgrade";
+#endif
+    QMetaObject::invokeMethod(m_upgradeWorker, "runUpgrade", Qt::QueuedConnection,
+        Q_ARG(QString, m_host),
+        Q_ARG(int,     m_port),
+        Q_ARG(QString, m_dbName),
+        Q_ARG(QString, m_superuser),
+        Q_ARG(QString, m_superPass));
 }
 
 // ---------------------------------------------------------------------------

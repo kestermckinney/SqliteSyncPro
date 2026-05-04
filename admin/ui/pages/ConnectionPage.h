@@ -28,8 +28,17 @@ private slots:
     void onConnectionTestResult(bool success, const QString &message);
     void onAlreadySetup(bool isSetup);
     void onModeChanged(int index);
+    void onUpgradeFinished(bool success, const QString &message);
 
 private:
+    /**
+     * If the database has an old sync_data schema, prompt the user to upgrade
+     * and run the UpgradeWorker. Returns true if the caller should continue
+     * (no upgrade needed, or upgrade kicked off and we'll resume on completion).
+     * Returns false if the caller should stop (user declined the upgrade).
+     */
+    bool maybePromptForUpgrade();
+
     void showStatus(bool isError, const QString &message);
     void hideStatus();
 

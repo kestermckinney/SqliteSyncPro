@@ -84,6 +84,10 @@ void TeardownWorker::runTeardown(const QString &host,
     step(QStringLiteral("Drop table: sync_data"),
          QStringLiteral("DROP TABLE IF EXISTS sync_data CASCADE"));
 
+    // Drop the server-time trigger function after the table that used it.
+    step(QStringLiteral("Drop function: sync_data_stamp_server_time"),
+         QStringLiteral("DROP FUNCTION IF EXISTS sync_data_stamp_server_time()"));
+
     step(QStringLiteral("Drop table: auth_users"),
          QStringLiteral("DROP TABLE IF EXISTS auth_users CASCADE"));
 

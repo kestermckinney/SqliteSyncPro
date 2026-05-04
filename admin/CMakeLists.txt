@@ -46,6 +46,8 @@ qt_add_executable(ProjectNotesRemoteHost WIN32
     backend/SetupWorker.cpp
     backend/TeardownWorker.h
     backend/TeardownWorker.cpp
+    backend/UpgradeWorker.h
+    backend/UpgradeWorker.cpp
     ui/MainWindow.h
     ui/MainWindow.cpp
     ui/WizardSidebar.h

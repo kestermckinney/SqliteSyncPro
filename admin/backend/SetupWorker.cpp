@@ -263,25 +263,54 @@ CREATE TABLE IF NOT EXISTS auth_users (
 
     // -----------------------------------------------------------------------
     // sync_data
+    //
+    // server_modified_at is populated by a BEFORE INSERT/UPDATE trigger on
+    // every write so the pull cursor is monotonic regardless of clients'
+    // updateddate values (which may be backdated or affected by clock skew).
+    // The pull index is on server_modified_at so pulls scan in true write order.
     // -----------------------------------------------------------------------
     ok = execStep(s++,
         QStringLiteral("Create table: sync_data"),
         QStringLiteral(R"(
 CREATE TABLE IF NOT EXISTS sync_data (
-    userid      TEXT   NOT NULL,
-    tablename   TEXT   NOT NULL,
-    id          TEXT   NOT NULL,
-    updateddate BIGINT NOT NULL,
-    jsonrowdata JSONB  NOT NULL,
+    userid             TEXT   NOT NULL,
+    tablename          TEXT   NOT NULL,
+    id                 TEXT   NOT NULL,
+    updateddate        BIGINT NOT NULL,
+    server_modified_at BIGINT NOT NULL,
+    jsonrowdata        JSONB  NOT NULL,
     PRIMARY KEY (userid, tablename, id)
 ))"));
+    if (!ok) goto rollback;
+
+    ok = execStep(s++,
+        QStringLiteral("Create function: sync_data_stamp_server_time"),
+        QStringLiteral(R"(
+CREATE OR REPLACE FUNCTION sync_data_stamp_server_time()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.server_modified_at := (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql)"));
+    if (!ok) goto rollback;
+
+    ok = execStep(s++,
+        QStringLiteral("Create trigger: sync_data_stamp_server_time"),
+        QStringLiteral(R"(
+DO $$ BEGIN
+    CREATE TRIGGER sync_data_stamp_server_time_trg
+        BEFORE INSERT OR UPDATE ON sync_data
+        FOR EACH ROW EXECUTE FUNCTION sync_data_stamp_server_time();
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$)"));
     if (!ok) goto rollback;
 
     ok = execStep(s++,
         QStringLiteral("Create index on sync_data"),
         QStringLiteral(R"(
 CREATE INDEX IF NOT EXISTS idx_sync_data_pull
-    ON sync_data (userid, tablename, updateddate))"));
+    ON sync_data (userid, tablename, server_modified_at))"));
     if (!ok) goto rollback;
 
     // -----------------------------------------------------------------------

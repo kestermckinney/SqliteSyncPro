@@ -12,6 +12,7 @@
 
 class SetupWorker;
 class TeardownWorker;
+class UpgradeWorker;
 
 class AdminController : public QObject
 {
@@ -76,7 +77,7 @@ public:
 
     bool isSetupRunning() const { return m_setupRunning; }
     bool isSetupDone()    const { return m_setupDone;    }
-    int  totalSteps()     const { return 21; }
+    int  totalSteps()     const { return 23; }
 
     QVariantList users() const { return m_users; }
 
@@ -90,6 +91,14 @@ public:
     int  teardownTotalSteps() const;
 
     Q_INVOKABLE void startTeardown();
+
+    /**
+     * Returns true if `sync_data` exists and is missing the
+     * `server_modified_at` column required by Project Notes 5.0.1.
+     * Returns false if the table is absent (fresh install) or already up-to-date.
+     */
+    Q_INVOKABLE bool needsUpgrade();
+    Q_INVOKABLE void startUpgrade();
 
     Q_INVOKABLE void saveConnectionSettings();
 
@@ -128,6 +137,11 @@ signals:
                                 const QString &stepName,
                                 const QString &detail);
     void teardownFinished(bool success, const QString &message);
+
+    void upgradeStepCompleted(int index, bool success,
+                              const QString &stepName,
+                              const QString &detail);
+    void upgradeFinished(bool success, const QString &message);
 
     void userAdded(bool success, const QString &message);
     void userRemoved(bool success, const QString &username);
@@ -178,4 +192,7 @@ private:
     bool            m_teardownDone    = false;
     QThread        *m_teardownThread  = nullptr;
     TeardownWorker *m_teardownWorker  = nullptr;
+
+    QThread        *m_upgradeThread = nullptr;
+    UpgradeWorker  *m_upgradeWorker = nullptr;
 };
