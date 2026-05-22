@@ -2,6 +2,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QDateTime>
 #include <QObject>
 #include <QList>
 #include <QMutex>
@@ -17,6 +18,15 @@ class QThread;
 class QWidget;
 class SyncLoopWorker;
 class SyncStatsWindow;
+
+struct SubscriptionStatus {
+    bool      hasActiveSubscription = false;
+    QString   status;           // "active", "trialing", "none", etc.
+    QString   planName;
+    QDateTime currentPeriodEnd; // invalid if not returned by server
+    bool      valid        = false; // false if call failed or not authenticated
+    QString   errorMessage;
+};
 
 /**
  * SqliteSyncPro – main public API.
@@ -285,6 +295,14 @@ public:
     bool    isDatabaseOpen()  const;
     bool    isInitialized()   const;
     QString lastError()       const;
+
+    /**
+     * Call the server-side get_subscription_status() PostgreSQL function via
+     * PostgREST RPC and return the result.  Requires prior authentication
+     * (isAuthenticated() must be true).  Executes synchronously in the calling
+     * thread.  Returns a SubscriptionStatus with valid == false on failure.
+     */
+    SubscriptionStatus getSubscriptionStatus();
 
     /**
      * Asynchronously compute sync completeness and emit syncStatusUpdated(percent).

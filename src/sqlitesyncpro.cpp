@@ -13,6 +13,7 @@
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QUrlQuery>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QReadWriteLock>
@@ -1130,6 +1131,61 @@ QString SqliteSyncPro::lastError() const
 {
     QMutexLocker lock(&m_mutex);
     return m_lastError;
+}
+
+SubscriptionStatus SqliteSyncPro::getSubscriptionStatus()
+{
+    SubscriptionStatus result;
+
+    QString url, authToken, supabaseKey;
+    {
+        QMutexLocker lock(&m_mutex);
+        if (m_authToken.isEmpty()) {
+            result.errorMessage = QStringLiteral("Not authenticated");
+            return result;
+        }
+        url        = m_postgrestUrl;
+        authToken  = m_authToken;
+        supabaseKey = m_supabaseKey;
+    }
+
+    HttpClient http;
+    http.setBaseUrl(url);
+    http.setAuthToken(authToken);
+    http.setApiKey(supabaseKey);
+
+    const QByteArray response = http.post(
+        QStringLiteral("rpc/get_subscription_status"),
+        QByteArrayLiteral("{}"));
+
+    if (!http.wasSuccessful()) {
+        result.errorMessage = http.lastError().isEmpty()
+            ? QStringLiteral("HTTP %1").arg(http.lastStatusCode())
+            : http.lastError();
+        return result;
+    }
+
+    const QJsonDocument doc = QJsonDocument::fromJson(response);
+    QJsonObject obj;
+    if (doc.isArray() && !doc.array().isEmpty())
+        obj = doc.array().first().toObject();
+    else if (doc.isObject())
+        obj = doc.object();
+    else {
+        result.errorMessage = QStringLiteral("Unexpected response format");
+        return result;
+    }
+
+    result.hasActiveSubscription = obj.value(QStringLiteral("has_active_subscription")).toBool();
+    result.status   = obj.value(QStringLiteral("status")).toString();
+    result.planName = obj.value(QStringLiteral("plan_name")).toString();
+
+    const QString periodEndStr = obj.value(QStringLiteral("current_period_end")).toString();
+    if (!periodEndStr.isEmpty())
+        result.currentPeriodEnd = QDateTime::fromString(periodEndStr, Qt::ISODateWithMs);
+
+    result.valid = true;
+    return result;
 }
 
 #include "sqlitesyncpro.moc"
