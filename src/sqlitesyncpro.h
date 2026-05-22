@@ -21,7 +21,7 @@ class SyncStatsWindow;
 
 struct SubscriptionStatus {
     bool      hasActiveSubscription = false;
-    QString   status;           // "active", "trialing", "none", etc.
+    QString   status;           // MUST be lowercase: "active", "trialing", "none", etc.
     QString   planName;
     QDateTime currentPeriodEnd; // invalid if not returned by server
     bool      valid        = false; // false if call failed or not authenticated
@@ -301,6 +301,10 @@ public:
      * PostgREST RPC and return the result.  Requires prior authentication
      * (isAuthenticated() must be true).  Executes synchronously in the calling
      * thread.  Returns a SubscriptionStatus with valid == false on failure.
+     *
+     * NOTE: status values returned by the server (and stored in the subscriptions
+     * table) must be lowercase — e.g. "active", "trialing", "canceled".
+     * Mixed-case values like "Active" will not be recognized as active.
      */
     SubscriptionStatus getSubscriptionStatus();
 

@@ -550,6 +550,15 @@ bool SqliteSyncPro::initialize()
         m_lastError.clear();
     }
 
+    // Close and remove any previous persistent connection before opening a new one.
+    if (m_persistentDb.isOpen())
+        m_persistentDb.close();
+    if (!m_persistentConnName.isEmpty()) {
+        m_persistentDb = QSqlDatabase();
+        QSqlDatabase::removeDatabase(m_persistentConnName);
+        m_persistentConnName.clear();
+    }
+
     // Open the persistent connection for the calling application.
     m_persistentConnName = QStringLiteral("SqliteSyncPro_main_%1")
                                .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
