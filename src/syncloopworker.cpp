@@ -74,6 +74,12 @@ void SyncLoopWorker::run()
         http.setAuthToken(m_authToken);
         http.setApiKey(m_supabaseKey);
 
+        // Publish the client so requestStop() can abort an in-flight request.
+        {
+            QMutexLocker locker(&m_stopMutex);
+            m_http = &http;
+        }
+
         SyncEngine engine;
         engine.setDatabase(db);
         engine.setHttpClient(&http);
@@ -228,6 +234,12 @@ void SyncLoopWorker::run()
             if (m_stopRequested)
                 break;
         }
+
+        // Stop publishing the client before it goes out of scope below.
+        {
+            QMutexLocker locker(&m_stopMutex);
+            m_http = nullptr;
+        }
     } // engine and http destroyed here; db is the only remaining reference
 
     cleanupDb();
@@ -239,6 +251,11 @@ void SyncLoopWorker::requestStop()
     QMutexLocker locker(&m_stopMutex);
     m_stopRequested = true;
     m_stopCondition.wakeAll();
+    // If a request is in flight, abort it so the worker doesn't wait out the
+    // full request timeout before noticing the stop.  Queued so abort() runs on
+    // the worker thread, where executeRequest()'s nested event loop dispatches it.
+    if (m_http)
+        QMetaObject::invokeMethod(m_http, &HttpClient::abort, Qt::QueuedConnection);
 }
 
 void SyncLoopWorker::retryNow()

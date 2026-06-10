@@ -14,6 +14,8 @@
 #include "syncconfig.h"
 #include "syncresult.h"
 
+class HttpClient;
+
 /**
  * SyncLoopWorker – runs a continuous sync loop on whatever thread it is moved to.
  *
@@ -95,6 +97,11 @@ private:
     QMutex         m_stopMutex;
     QWaitCondition m_stopCondition;
     bool           m_stopRequested = false;
+
+    // Points to the HttpClient running the current cycle (lives on the stack in
+    // run()).  Guarded by m_stopMutex so requestStop() can abort an in-flight
+    // request from another thread without racing the set/clear in run().
+    HttpClient    *m_http = nullptr;
 
     // Last sync completeness percent (0–100) fed back by SqliteSyncPro after
     // each cycle via updateSyncPercent().  Starts at 0 so the first cycle

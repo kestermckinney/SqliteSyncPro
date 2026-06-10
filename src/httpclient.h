@@ -9,6 +9,8 @@
 #include <QNetworkAccessManager>
 #include <QNetworkRequest>
 
+class QNetworkReply;
+
 /**
  * Thin wrapper around QNetworkAccessManager that communicates with a PostgREST server.
  *
@@ -42,6 +44,14 @@ public:
      */
     void clearConnections();
 
+    /**
+     * Maximum time (ms) to wait for a single request to complete before it is
+     * aborted.  Prevents a stalled connection from blocking the sync thread
+     * forever.  An aborted request reports status 0, which the engine treats as
+     * a network error (triggering its normal backoff).  Default: 30 s.
+     */
+    void setTimeoutMs(int ms) { m_timeoutMs = ms; }
+
     QString baseUrl()    const { return m_baseUrl;    }
     QString authToken()  const { return m_authToken;  }
     QString apiKey()     const { return m_apiKey;     }
@@ -69,6 +79,15 @@ public:
     qint64  lastBytesSent()     const { return m_lastBytesSent;     }
     qint64  lastBytesReceived() const { return m_lastBytesReceived; }
 
+public slots:
+    /**
+     * Abort the request currently in flight, if any.  Safe to call when none is
+     * active.  Used to interrupt a stalled request promptly on shutdown — post
+     * it via a queued connection so it runs on this object's (worker) thread,
+     * where the nested event loop in executeRequest() will dispatch it.
+     */
+    void abort();
+
 protected:
     void setLastStatusCode(int code)          { m_lastStatusCode = code; }
     void setLastError(const QString &error)   { m_lastError = error;     }
@@ -89,4 +108,10 @@ private:
     QString  m_lastContentRange;
     qint64   m_lastBytesSent     = 0;
     qint64   m_lastBytesReceived = 0;
+    int      m_timeoutMs         = 30000;   // per-request deadline (ms)
+
+    // The reply currently being awaited in executeRequest().  Written and read
+    // only on this object's own thread; abort() (dispatched here via a queued
+    // call) uses it to cancel a stalled request.
+    QNetworkReply *m_currentReply = nullptr;
 };

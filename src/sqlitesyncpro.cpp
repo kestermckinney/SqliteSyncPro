@@ -61,9 +61,17 @@ SqliteSyncPro::~SqliteSyncPro()
         QObject::disconnect(m_syncThread, nullptr, this, nullptr);
 
         if (m_syncWorker)
-            m_syncWorker->requestStop();
+            m_syncWorker->requestStop();   // also aborts any in-flight request
         m_syncThread->quit();
-        m_syncThread->wait();   // blocks until the thread exits cleanly
+        // requestStop() aborts the current request and the HttpClient enforces a
+        // per-request timeout, so the worker exits promptly.  The bounded wait is
+        // a final safety net so the destructor can never hang forever; terminate()
+        // is a last resort (HTTP runs with no DB lock held and the DB is in WAL
+        // mode, so an interrupted write rolls back cleanly on next open).
+        if (!m_syncThread->wait(10000)) {
+            m_syncThread->terminate();
+            m_syncThread->wait();
+        }
 
         delete m_syncWorker;
         m_syncWorker = nullptr;

@@ -3,6 +3,7 @@
 
 #include <QNetworkReply>
 #include <QEventLoop>
+#include <QTimer>
 #include <QUrl>
 #include <QDebug>
 
@@ -39,6 +40,12 @@ void HttpClient::setApiKey(const QString &key)
 void HttpClient::clearConnections()
 {
     m_nam->clearConnectionCache();
+}
+
+void HttpClient::abort()
+{
+    if (m_currentReply)
+        m_currentReply->abort();
 }
 
 QNetworkRequest HttpClient::buildRequest(const QString &endpoint, const QUrlQuery &query) const
@@ -95,9 +102,26 @@ QByteArray HttpClient::executeRequest(QNetworkRequest &request,
         return {};
     }
 
+    // Wait for the reply, but never indefinitely: a single-shot timer also quits
+    // the loop, so a stalled connection cannot block the sync thread forever.
     QEventLoop loop;
-    connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    QTimer timer;
+    timer.setSingleShot(true);
+    connect(reply,  &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    connect(&timer, &QTimer::timeout,         &loop, &QEventLoop::quit);
+    timer.start(m_timeoutMs);
+
+    m_currentReply = reply;   // allow abort() to cancel this request
     loop.exec();
+    m_currentReply = nullptr;
+
+    // Timed out (or aborted) before the reply finished — cancel it so error()
+    // reports OperationCanceledError and the status code stays 0 (network error).
+    if (!reply->isFinished()) {
+        reply->abort();
+        if (m_lastError.isEmpty())
+            m_lastError = QStringLiteral("Request timed out after %1 ms").arg(m_timeoutMs);
+    }
 
     const QByteArray responseBody = reply->readAll();
     m_lastStatusCode    = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
