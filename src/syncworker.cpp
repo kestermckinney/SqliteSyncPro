@@ -2,6 +2,7 @@
 #include "syncworker.h"
 #include "httpclient.h"
 #include "syncengine.h"
+#include "synclog.h"
 
 #include <QSqlDatabase>
 #include <QSqlError>
@@ -51,6 +52,7 @@ void SyncWorker::run()
         result.success      = false;
         result.errorMessage = QStringLiteral("Worker: cannot open database: %1")
                                   .arg(db.lastError().text());
+        SyncLog::error(result.errorMessage);
         cleanupDb();
         emit finished(result);
         return;

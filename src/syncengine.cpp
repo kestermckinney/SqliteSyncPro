@@ -3,6 +3,7 @@
 #include "httpclient.h"
 #include "rowencryption.h"
 #include "schemainspector.h"
+#include "synclog.h"
 
 #include <QReadWriteLock>
 #include <QSqlQuery>
@@ -13,6 +14,23 @@
 #include <QJsonArray>
 #include <QUrlQuery>
 #include <QDebug>
+
+// Report a per-table sync failure through the library's logging seam. Builds a
+// single line naming the table, the reason, and the failure category so the
+// host app (ProjectNotes) can record it in syncerrors.log.
+static void logTableFailure(const TableSyncResult &r)
+{
+    QString category;
+    if (r.networkError)      category = QStringLiteral(" [network]");
+    else if (r.authError)    category = QStringLiteral(" [auth]");
+
+    SyncLog::error(QStringLiteral("Table '%1' sync failed%2: %3")
+                       .arg(r.tableName,
+                            category,
+                            r.errorMessage.isEmpty()
+                                ? QStringLiteral("unknown error")
+                                : r.errorMessage));
+}
 
 #if 0 // QT_DEBUG
 static QString debugQuery(const QSqlQuery &q)
@@ -184,6 +202,7 @@ SyncResult SyncEngine::synchronizeTable(const SyncTableConfig &config)
         result.success           = false;
         result.errorMessage      = tableResult.errorMessage;
         result.tableResults.append(tableResult);
+        logTableFailure(tableResult);
         return result;
     }
 
@@ -193,6 +212,7 @@ SyncResult SyncEngine::synchronizeTable(const SyncTableConfig &config)
         result.success           = false;
         result.errorMessage      = tableResult.errorMessage;
         result.tableResults.append(tableResult);
+        logTableFailure(tableResult);
         return result;
     }
 
@@ -207,6 +227,7 @@ SyncResult SyncEngine::synchronizeTable(const SyncTableConfig &config)
         result.success           = false;
         result.errorMessage      = colError;
         result.tableResults.append(tableResult);
+        logTableFailure(tableResult);
         return result;
     }
 
@@ -219,6 +240,7 @@ SyncResult SyncEngine::synchronizeTable(const SyncTableConfig &config)
         tableResult.success = false;
         result.success      = false;
         result.tableResults.append(tableResult);
+        logTableFailure(tableResult);
         return result;
     }
     tableResult.pulled = pulled;
@@ -229,6 +251,7 @@ SyncResult SyncEngine::synchronizeTable(const SyncTableConfig &config)
         result.success           = false;
         result.errorMessage      = tableResult.errorMessage;
         result.tableResults.append(tableResult);
+        logTableFailure(tableResult);
         return result;
     }
 
@@ -242,6 +265,7 @@ SyncResult SyncEngine::synchronizeTable(const SyncTableConfig &config)
         tableResult.success = false;
         result.success      = false;
         result.tableResults.append(tableResult);
+        logTableFailure(tableResult);
         return result;
     }
     tableResult.pushed = pushed;

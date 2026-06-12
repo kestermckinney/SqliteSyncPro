@@ -3,6 +3,7 @@
 #include "authmanager.h"
 #include "httpclient.h"
 #include "syncengine.h"
+#include "synclog.h"
 
 #include <QSqlDatabase>
 #include <QSqlError>
@@ -60,6 +61,7 @@ void SyncLoopWorker::run()
         result.success      = false;
         result.errorMessage = QStringLiteral("SyncLoopWorker: cannot open database: %1")
                                   .arg(db.lastError().text());
+        SyncLog::error(result.errorMessage);
         cleanupDb();
         emit syncCompleted(result);
         emit finished();
@@ -204,9 +206,8 @@ void SyncLoopWorker::run()
 #endif
                     continue;  // retry cycle immediately without sleeping
                 } else {
-#if 0 // QT_DEBUG
-                    qWarning().noquote() << QStringLiteral("[SyncLoopWorker] Reauthentication failed; stopping sync loop");
-#endif
+                    SyncLog::error(QStringLiteral("Reauthentication failed; sync loop stopped. "
+                                                  "Check the cloud sync email/password in Cloud Sync Settings."));
                     emit authenticationRequired();
                     break;
                 }
@@ -220,11 +221,8 @@ void SyncLoopWorker::run()
                 // Drop stale connections so the next cycle opens fresh ones after
                 // the network comes back rather than reusing dead HTTP/2 streams.
                 http.clearConnections();
-#if 0 // QT_DEBUG
-                qWarning().noquote()
-                    << QStringLiteral("[SyncLoopWorker] Network unreachable; backing off %1 ms before retry")
-                           .arg(waitMs);
-#endif
+                SyncLog::error(QStringLiteral("Server unreachable; backing off %1 ms before retrying sync.")
+                                   .arg(waitMs));
             }
 
             // Sleep for the interval, waking early if stop is requested.
